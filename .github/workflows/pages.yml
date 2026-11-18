@@ -24,12 +24,16 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Record the build commit
+        run: printf '%s\n' "$GITHUB_SHA" > dist/build-sha.txt
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
     needs: build
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -41,3 +45,18 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify the public site in Chrome
+        env:
+          PAGES_URL: ${{ needs.deploy.outputs.page_url }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/sar-browser" --no-audit --no-fund --no-package-lock playwright@1.56.1
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/sar-browser/node_modules/playwright" node .github/verify-pages.cjs
