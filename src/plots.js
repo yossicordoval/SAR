@@ -70,7 +70,7 @@ function marker(ctx, x, y, h, color) {
   ctx.setLineDash([])
 }
 
-export function plotProfile(canvas, frame, tab, contributions) {
+export function plotProfile(canvas, frame, tab, contributions, study) {
   const board = setup(canvas)
   if (!board || !frame) return
   const { ctx, w, h } = board
@@ -79,16 +79,27 @@ export function plotProfile(canvas, frame, tab, contributions) {
   const selected = a.tracks[frame.selected][frame.pulse]
   if (height < 12) return
   grid(ctx, x, y, width, height, 5, 3)
+  if (study && tab === 'range') {
+    plotStudyRange(ctx, { x, y, width, height }, frame, study)
+    return
+  }
   if (tab === 'doppler') {
     const history = a.tracks[frame.selected]
     const available = history.slice(frame.first, frame.pulse + 1)
-    const max = Math.ceil(Math.max(...history.flatMap(v => [Math.abs(v.doppler), Math.abs(v.stationary)]), 2) / 3) * 3
+    const reference = study && frame.comparison?.tracks[frame.selected]
+    const scaleHistory = reference ? [...history, ...reference] : history
+    const max = Math.ceil(Math.max(...scaleHistory.flatMap(v => [Math.abs(v.doppler), Math.abs(v.stationary)]), 2) / 3) * 3
     const vertical = v => y + (1 - v / max) * height / 2
     const x0 = x + width * frame.first / (a.count - 1)
     const extent = width * (frame.pulse - frame.first) / (a.count - 1)
     ticks(ctx,x,y,width,height,5,2,u => (u * DURATION).toFixed(1) + 's',u => Math.round((1 - 2*u)*max))
     if (history.some(v => Math.abs(v.doppler - v.stationary) > 0.001))
       trace(ctx,available.map(v => v.stationary),x0,extent,vertical,amber)
+    if (reference && study.reference) {
+      ctx.setLineDash([5, 4])
+      trace(ctx,reference.slice(frame.first,frame.pulse+1).map(v => v.doppler),x0,extent,vertical,'#a8afcd')
+      ctx.setLineDash([])
+    }
     trace(ctx,available.map(v => v.doppler),x0,extent,vertical,cyan)
     marker(ctx,x0+extent,y,height,'#54e5dc75')
     ctx.beginPath(); ctx.arc(x0+extent,vertical(selected.doppler),3,0,Math.PI*2); ctx.fillStyle = cyan; ctx.fill()
@@ -117,6 +128,42 @@ export function plotProfile(canvas, frame, tab, contributions) {
   ctx.font = '9px ui-monospace, monospace'
   ctx.fillStyle = '#c3e9c8'
   ctx.fillText('SELECTED ECHO', markerX + (markerX > x+width-95 ? -79 : 6), y + 11)
+}
+
+function plotStudyRange(ctx, { x, y, width, height }, frame, { lesson, reference }) {
+  const baseline = frame.comparison
+  const current = frame.compressed || frame.profiles.echo
+  const points = Object.values(frame.tracks).map(track => track[frame.pulse].range)
+  const compared = Object.values(baseline.tracks).map(track => track[baseline.pulse].range)
+  const zoom = lesson.zoom || 32
+  const domain = [...points, ...compared]
+  const left = Math.min(...domain) - zoom
+  const right = Math.max(...domain) + zoom
+  const max = Math.max(3.5, Math.ceil(Math.max(...current,...baseline.profile)))
+  const yAt = v => y + height * (1 - clamp(v / max))
+  const xAt = range => x + width * (range - left) / (right - left)
+  ticks(ctx,x,y,width,height,4,2,t => Math.round(left + (right-left)*t) + ' m',t => (max*(1-t)).toFixed(1))
+  const curve = (values, start, resolution, color, dashed) => {
+    const first = Math.max(0,Math.ceil((left-start)/resolution))
+    const last = Math.min(values.length-1,Math.floor((right-start)/resolution))
+    const axis = start + first*resolution
+    ctx.setLineDash(dashed ? [5, 4] : [])
+    trace(ctx, values.slice(first,last+1), xAt(axis), (last-first)*resolution*width/(right-left), yAt, color)
+    ctx.setLineDash([])
+  }
+  if (reference) curve(baseline.profile, baseline.minRange, baseline.dr, '#a8afcd', true)
+  curve(current, frame.acquisition.minRange, frame.acquisition.dr, cyan, false)
+  points.forEach((range, index) => {
+    const color = index === 0 ? '#a5f6be' : amber
+    const active = frame.selected === Object.keys(frame.tracks)[index]
+    const px = xAt(range)
+    marker(ctx,px,y,height,active ? color : color + 'a0')
+    ctx.fillStyle = color
+    ctx.fillText(index === 0 ? 'A' : 'B',px + (index === 0 ? -10 : 3),y + 12)
+    if (active) {
+      ctx.beginPath(); ctx.arc(px,y + 4,2.4,0,Math.PI*2); ctx.fill()
+    }
+  })
 }
 
 const colors = [[8,13,32],[26,27,74],[42,54,132],[30,106,169],[30,166,177],[73,206,159],[164,228,114],[253,222,117]]

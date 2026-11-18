@@ -121,7 +121,7 @@ export function renderLayout(root) {
         <button class="icon-button" id="step" title="Step one radar pulse" aria-label="Step one pulse">${icon('step',17)}</button>
         <select id="rate" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
       </div>
-      <div class="timeline"><div class="time-meta"><span>FLIGHT TIMELINE</span><output id="clock">0.00 / 8.00 s</output></div><input id="scrub" type="range" min="0" max="192" value="0" aria-label="Flight timeline"><div class="timeline-ticks" aria-hidden="true"><span>0 s</span><span>2 s</span><span>4 s</span><span>6 s</span><span>8 s</span></div></div>
+      <div class="timeline"><div class="time-meta"><span id="timeline-label">FLIGHT TIMELINE</span><output id="clock">0.00 / 8.00 s</output></div><input id="scrub" type="range" min="0" max="192" value="0" aria-label="Flight timeline"><div class="timeline-ticks" aria-hidden="true"><span>0 s</span><span>2 s</span><span>4 s</span><span>6 s</span><span>8 s</span></div></div>
       <div class="segmented capture-mode" aria-label="Acquisition mode"><button id="flight" aria-pressed="true">Flight</button><button id="instant" aria-pressed="false">Single Instant</button></div>
     </section>
     <dialog id="about"><header><h2>About the simulation</h2><button class="icon-button" id="close-help" aria-label="Close">${icon('close')}</button></header>

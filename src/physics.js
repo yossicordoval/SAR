@@ -35,6 +35,19 @@ export function reflectivity(x, y, scenario) {
 }
 
 export function sceneObjects(config) {
+  if (config.scenario === 'study-point') return [
+    { id: 'point-a', label: 'Reflector A', x: config.targetX, y: config.targetY, z: 0, strength: 2.6 },
+  ]
+  if (config.scenario === 'study-pair') {
+    // Choose equal carrier phase modulo one cycle at the demonstration pulse.
+    const near = Math.hypot(config.altitude, platform(config, DURATION / 2).y)
+    const far = near + C / 56e6
+    const separation = Math.sqrt(far ** 2 - config.altitude ** 2) + platform(config, DURATION / 2).y
+    return [
+      { id: 'point-a', label: 'Reflector A', x: 0, y: 0, z: 0, strength: 2.6 },
+      { id: 'point-b', label: 'Reflector B', x: 0, y: separation, z: 0, strength: 2.6 },
+    ]
+  }
   const objects = [{ id: 'vehicle', label: 'Survey vehicle', x: config.targetX, y: config.targetY, z: 2,
     vx: config.targetSpeed * Math.cos(config.heading * Math.PI / 180),
     vy: config.targetSpeed * Math.sin(config.heading * Math.PI / 180), strength: 2.6 * config.rcs }]
@@ -189,6 +202,12 @@ export function components(state, pulse, selected) {
     echo[index] = Math.hypot(state.i[total + index], state.q[total + index])
   }
   return { target, ground, echo }
+}
+
+export function compressedProfile(state, pulse) {
+  const offset = state.bins * pulse
+  return state.rangeI.slice(offset, offset + state.bins)
+    .map((re, index) => Math.hypot(re, state.rangeQ[offset + index]))
 }
 
 export function sample(array, offset, index, bins) {

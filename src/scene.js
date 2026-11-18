@@ -199,6 +199,14 @@ export function createScene(canvas, geometry, onSelect) {
     for (const obj of sceneObjects(config)) {
       const spot = frame.tracks[obj.id][frame.pulse]
       const isSelected = obj.id === frame.selected
+      if (obj.id.startsWith('point-')) {
+        const color = obj.id === 'point-a' ? '#a5f6be' : '#f4ce80'
+        const point = project(p(spot.x, spot.y, 1))
+        const [x,y] = point
+        outline(ctx, [[x,y-5],[x+5,y],[x,y+5],[x-5,y]], color, isSelected ? '#e9ffff' : '#192839', 1)
+        hits.push({ point, obj, spot })
+        continue
+      }
       poly(ring(spot.x - 4,spot.y + 0.5,1,17,8,12), '#14212177')
       if (isSelected) poly(ring(spot.x,spot.y,1.5,21,13,36), '#73edaa1c', '#93f0afaa', 1)
       model(add,spot.x,spot.y,0,obj.id === 'vehicle' ? 'vehicle' : 'rock', obj.id === 'vehicle' ? (geometry ? 1.2 : 1.75) : 1.85,0.13)
@@ -274,8 +282,18 @@ export function createScene(canvas, geometry, onSelect) {
     }
     if (options.labels) {
       for (const { point, obj } of hits) {
-        if (obj.id !== frame.selected && !geometry) continue
+        const isPoint = obj.id.startsWith('point-')
+        if (obj.id !== frame.selected && !geometry && !isPoint) continue
         const [x,y] = point
+        if (isPoint) {
+          const second = obj.id === 'point-b'
+          const color = second ? '#f4ce80' : '#a5f6be'
+          const lx = clamp(x + (second ? 14 : -105),8,w - 101)
+          const ly = clamp(y - (second ? 31 : 19),9,h - 25)
+          outline(ctx, [[x,y],[second ? lx : lx+77,ly+10]], null, color, 0.8, false)
+          label(ctx,lx,ly,obj.label,null,color)
+          continue
+        }
         label(ctx,clamp(x + 12,8,w - 112),clamp(y - 28,9,h - 25),obj.label,null,obj.id === frame.selected ? '#a5f6be' : '#ced8d5')
       }
     }

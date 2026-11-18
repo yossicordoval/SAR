@@ -1,7 +1,8 @@
-import { components, createAcquisition, pulseTime } from './physics.js'
+import { compressedProfile, components, createAcquisition, pulseTime } from './physics.js'
 import { createFocuser, migration } from './processing.js'
 
 let state, focus
+const comparisons = new Map()
 
 self.onmessage = ({ data: msg }) => {
   if (msg.config) {
@@ -19,7 +20,22 @@ self.onmessage = ({ data: msg }) => {
   const profiles = components(state, pulse, msg.selected)
   const image = msg.stage === 'focused' ? focus(pulse, msg.instant) : null
   const corrected = msg.stage === 'migration' ? migration(state, first, pulse, msg.selected) : null
-  self.postMessage({ type: 'frame', revision: msg.revision, request: msg.request, pulse, first, time: pulseTime(state.config, pulse),
+  let comparison
+  if (msg.study) {
+    const { id, baseline, profile } = msg.study
+    if (!comparisons.has(id)) {
+      const reference = createAcquisition(baseline)
+      const referencePulse = Math.min(reference.count - 1, pulse)
+      comparisons.set(id, {
+        tracks: reference.tracks, pulse: referencePulse, minRange: reference.minRange, dr: reference.dr,
+        profile: profile === 'compressed' ? compressedProfile(reference, referencePulse)
+          : profile === 'range' ? components(reference, referencePulse, msg.selected).echo : null,
+      })
+    }
+    comparison = comparisons.get(id)
+  }
+  self.postMessage({ type: 'frame', studyId: msg.study?.id, comparison,
+    compressed: msg.study?.profile === 'compressed' ? compressedProfile(state, pulse) : null, revision: msg.revision, request: msg.request, pulse, first, time: pulseTime(state.config, pulse),
     profiles, image, corrected, selected: msg.selected, stage: msg.stage,
     iqI: i.slice(pulse * bins, (pulse + 1) * bins), iqQ: q.slice(pulse * bins, (pulse + 1) * bins) })
 }

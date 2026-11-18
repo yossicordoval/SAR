@@ -48,6 +48,16 @@ async function verify() {
       assert.ok(new URL(asset).pathname.startsWith('/SAR/assets/'), asset)
       assert.ok((await page.request.get(asset)).ok(), asset)
     }
+    await page.getByRole('button', { name: 'Study Mode' }).click()
+    await page.getByRole('heading', { name: 'Geometry, range & delay' }).waitFor()
+    await page.waitForFunction(() => document.querySelector('#optical-object')?.textContent === 'Reflector A')
+    await page.getByText('It arrives later and moves right.', { exact: true }).click()
+    await page.getByRole('button', { name: 'Next', exact: true }).click()
+    const altitude = page.getByRole('slider', { name: /Platform altitude/ })
+    await altitude.press('End')
+    await page.getByText('Change observed. Compare again or continue.', { exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Next', exact: true }).click()
+    await page.getByText('Bottom line', { exact: true }).waitFor()
     assert.deepEqual(errors, [])
     console.log('Verified public Pages HTML, JavaScript, CSS, and pulse processing in the Web Worker for ' + process.env.GITHUB_SHA)
   } finally {
