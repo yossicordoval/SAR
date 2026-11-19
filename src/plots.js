@@ -287,7 +287,7 @@ export function plotImage(canvas, frame, onSelect, highlight = true) {
   ctx.strokeStyle = '#50616d'
   ctx.lineWidth = 1
   ctx.strokeRect(x,y,width,height)
-  const selected = a.tracks[frame.selected][frame.pulse]
+  const selected = a.tracks[frame.selected][frame.focusReference ?? frame.pulse]
   const toPixel = v => [x+width*(v.x+AREA.x)/(2*AREA.x),y+height*(AREA.y-v.y)/(2*AREA.y)]
   const [px,py] = toPixel(selected)
   if (highlight && px > x+7 && px < x+width-7 && py > y+7 && py < y+height-7) {
@@ -310,7 +310,7 @@ export function plotImage(canvas, frame, onSelect, highlight = true) {
   canvas.onclick = event => {
     const rect = canvas.getBoundingClientRect()
     const hits = Object.entries(a.tracks).map(([id, history]) => {
-      const [hx,hy] = toPixel(history[frame.pulse])
+      const [hx,hy] = toPixel(history[frame.focusReference ?? frame.pulse])
       return [id,Math.hypot(event.clientX-rect.left-hx,event.clientY-rect.top-hy)]
     }).sort((left,right) => left[1]-right[1])
     if (hits[0][1] < 24) onSelect(hits[0][0])

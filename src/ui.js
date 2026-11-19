@@ -1,3 +1,5 @@
+import { URBAN_DENSITIES } from './environments.js'
+import { parameterInfo } from './learning-info.js'
 import { DEFAULTS, SCENARIOS } from './physics.js'
 
 const paths = {
@@ -29,6 +31,16 @@ export function icon(name, size = 16) {
   return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + paths[name] + '</svg>'
 }
 
+const brandLogo = `<svg viewBox="0 0 36 36" width="36" height="36" aria-hidden="true">
+  <path d="M9 11h15l3 4v7l-2 3 2 8H8l2-8-2-4v-7z" fill="#102c3a" stroke="#56cdd5" stroke-width="1.4" stroke-linejoin="round"/>
+  <rect x="11" y="14" width="13" height="10" rx="2.5" fill="#080f1d" stroke="#367d8b"/>
+  <circle cx="17.5" cy="19" r="3.9" fill="none" stroke="#397e8c"/>
+  <path class="brand-sweep" d="M17.5 19v-3.9a3.9 3.9 0 0 1 3.9 3.9Z" fill="#77f3e9"/>
+  <path d="M12 28h3m-1.5-1.5v3m5.5-1.5h2" stroke="#8ae3e5" stroke-linecap="round"/>
+  <path d="M20 9q5-6 13-5" fill="none" stroke="#52a3b5" stroke-dasharray="1.5 2"/>
+  <path d="m27 3 2 2-2 2-2-2zm-4 1 2 2-1 1-2-2zm6 2 2 2-1 1-2-2z" fill="#a3fbf1"/>
+</svg>`
+
 const controls = [
   ['bandwidth', 'Bandwidth', 24, 72, 1, 'MHz', 'Wider bandwidth improves separation in slant range.'],
   ['prf', 'Pulse repetition frequency', 12, 36, 1, 'Hz', 'Pulse Repetition Frequency (PRF) is how often the radar transmits.'],
@@ -44,8 +56,8 @@ const controls = [
 ]
 
 export function controlMarkup([id, label, min, max, step, unit, title]) {
-  return '<label class="slider-label" title="'+title+'"><span>'+label+'</span><output id="'+id+'-out"></output>' +
-    '<input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+DEFAULTS[id]+'" data-unit="'+unit+'"></label>'
+  return '<div class="control-info-row"><label class="slider-label" title="'+title+'"><span>'+label+'</span><output id="'+id+'-out"></output>' +
+    '<input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+DEFAULTS[id]+'" data-unit="'+unit+'"></label>'+parameterInfo(id,label)+'</div>'
 }
 
 function panel(id, iconName, title, note, content, footer) {
@@ -58,26 +70,30 @@ function panel(id, iconName, title, note, content, footer) {
 export function renderLayout(root) {
   root.innerHTML = `
     <header class="masthead">
-      <div class="brand"><div class="brand-symbol">${icon('radar',27)}</div><div><h1>SAR War Room</h1><p>Synthetic Aperture Radar Simulator</p></div></div>
+      <div class="brand"><div class="brand-symbol">${brandLogo}</div><div><h1>SARcade</h1><p>Interactive Synthetic Aperture Radar Lab</p></div></div>
       <nav class="mode-switch" aria-label="Learning mode">
         <button id="sandbox-mode" aria-pressed="true">${icon('sliders')} <span>Sandbox</span></button>
         <button id="study-mode" aria-pressed="false">${icon('study')} <span>Study Mode</span></button>
+        <button id="analysis-mode" aria-pressed="false">${icon('image')} <span>Image Analysis</span></button>
+        <button id="space-mode" aria-pressed="false">${icon('radar')} <span>Space Mode</span></button>
       </nav>
-      <div class="header-actions"><span class="engine-state"><i></i><span id="engine-status">INITIALIZING</span></span><button id="help" class="icon-button help" aria-label="About the simulation" title="About the simulation">${icon('help',18)}</button></div>
+      <div class="header-actions"><span class="engine-state"><i></i><span id="engine-status">INITIALIZING</span></span><button id="help" class="icon-button help" aria-label="About SARcade" title="About SARcade">${icon('help',18)}</button></div>
     </header>
     <main class="workspace">
       <aside class="sidebar" aria-label="Simulation controls">
         <section id="study-card" class="sidebar-card" hidden></section>
+        <section id="space-card" class="sidebar-card" aria-label="Orbital controls" hidden></section>
         <section id="scenarios-card" class="sidebar-card">
           <h2>${icon('layers')} Scenario</h2>
           <div class="scenario-list">${SCENARIOS.map(s => '<button class="scenario" data-scenario="'+s.id+'" aria-pressed="false"><span class="scenario-symbol">'+icon(s.icon,17)+'</span><span><strong>'+s.name+'</strong><small>'+s.detail+'</small></span>'+icon('chevron',13)+'</button>').join('')}</div>
+          <div id="urban-options" class="control-info-row" hidden><label class="select-label">Urban density<select id="urban-density">${URBAN_DENSITIES.map(density=>`<option value="${density}">${density}</option>`).join('')}</select></label>${parameterInfo('urbanDensity','Urban density')}</div>
         </section>
         <section id="radar-card" class="sidebar-card">
           <h2>${icon('sliders')} Radar parameters</h2>
-          <label class="select-label" title="Carrier frequency determines wavelength and phase sensitivity."><span>Carrier frequency</span><select id="frequency"><option value="42">42 MHz</option><option value="56">56 MHz</option><option value="70">70 MHz</option></select></label>
+          <div class="control-info-row"><label class="select-label" title="Carrier frequency determines wavelength and phase sensitivity."><span>Carrier frequency</span><select id="frequency"><option value="42">42 MHz</option><option value="56">56 MHz</option><option value="70">70 MHz</option></select></label>${parameterInfo('frequency','Carrier frequency')}</div>
           ${controls.slice(0,4).map(controlMarkup).join('')}
-          <label class="select-label"><span>Simulation quality</span><select id="quality"><option value="interactive">Interactive</option><option value="medium">Medium</option><option value="high">High</option></select></label>
-          <details><summary>Platform &amp; scene</summary><div class="details-content">${controls.slice(4).map(controlMarkup).join('')}<label class="check"><input type="checkbox" id="clutter" checked> Ground clutter</label></div></details>
+          <div class="control-info-row"><label class="select-label"><span>Simulation quality</span><select id="quality"><option value="interactive">Interactive</option><option value="medium">Medium</option><option value="high">High</option></select></label>${parameterInfo('quality','Simulation quality')}</div>
+          <details><summary>Platform &amp; scene</summary><div class="details-content">${controls.slice(4).map(controlMarkup).join('')}<div class="control-info-row"><label class="check"><input type="checkbox" id="clutter" checked> Ground clutter</label>${parameterInfo('clutter','Ground clutter')}</div></div></details>
         </section>
         <section class="sidebar-card view-card">
           <h2>${icon('optical')} Display options</h2>
@@ -124,8 +140,14 @@ export function renderLayout(root) {
       <div class="timeline"><div class="time-meta"><span id="timeline-label">FLIGHT TIMELINE</span><output id="clock">0.00 / 8.00 s</output></div><input id="scrub" type="range" min="0" max="192" value="0" aria-label="Flight timeline"><div class="timeline-ticks" aria-hidden="true"><span>0 s</span><span>2 s</span><span>4 s</span><span>6 s</span><span>8 s</span></div></div>
       <div class="segmented capture-mode" aria-label="Acquisition mode"><button id="flight" aria-pressed="true">Flight</button><button id="instant" aria-pressed="false">Single Instant</button></div>
     </section>
-    <dialog id="about"><header><h2>About the simulation</h2><button class="icon-button" id="close-help" aria-label="Close">${icon('close')}</button></header>
-      <p>Synthetic Aperture Radar (SAR) combines radio echoes from many positions along a flight path to form an image.</p>
+    <dialog id="space-intro" aria-labelledby="launch-heading"><header><h2 id="launch-heading">Launch sequence</h2><form method="dialog"><button>Skip intro</button></form></header>
+      <div data-launch-visual></div><p data-launch-caption>Rocket on the pad</p><p class="study-scale">Conceptual animation · scale and timing exaggerated</p>
+    </dialog>
+    <dialog id="learning-info" aria-labelledby="info-heading"><header><h2 id="info-heading"></h2><form method="dialog"><button>Close</button></form></header>
+      <p data-info-summary></p><details><summary>Learn more</summary><p></p></details>
+    </dialog>
+    <dialog id="about"><header><h2>About SARcade</h2><button class="icon-button" id="close-help" aria-label="Close">${icon('close')}</button></header>
+      <p><strong>SARcade</strong> (SAR + Arcade) is a hands-on lab for testing how SAR forms an image. Synthetic Aperture Radar (SAR) combines radio echoes from many positions along a flight path to form an image.</p>
       <p><strong>Geometry.</strong> The engine computes slant range <var>R</var>, round-trip delay <span class="formula">2R/c</span>, wrapped phase <span class="formula">−4πR/λ</span>, and Doppler <span class="formula">−(2/λ) dR/dt</span>. Here <var>c</var> is the speed of light and <var>λ</var> is the carrier wavelength.</p>
       <p><strong>Receiver.</strong> In-phase and Quadrature (I/Q) are the real and imaginary parts of the coherently summed signal. The ground and the vehicle both scatter. Noise is added at the receiver.</p>
       <p><strong>Processing.</strong> A matched filter compresses the chirp. Backprojection interpolates each pixel’s changing range and compensates its phase before summing the acquired pulses. The separate migration view aligns one stationary reference point. Moving objects may shift or smear under the stationary-scene assumption.</p>

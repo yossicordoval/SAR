@@ -1,4 +1,6 @@
 import './style.css'
+import { createSpace } from './space.js'
+import { installLearningInfo } from './learning-info.js'
 import { DEFAULTS, DURATION, SCENARIOS, pulseCount, sceneObjects } from './physics.js'
 import { plotImage, plotMatrix, plotProfile } from './plots.js'
 import { createScene } from './scene.js'
@@ -11,15 +13,18 @@ import { createStudy, currentLesson, studyConfig, transition } from './study-sta
 
 renderLayout(document.querySelector('#app'))
 const $ = id => document.getElementById(id)
+installLearningInfo($('learning-info'))
 const all = selector => Array.from(document.querySelectorAll(selector))
 const options = Object.fromEntries(all('[data-option]').map(el => [el.dataset.option,el.checked]))
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
 const view = { mode: 'sandbox', tab: 'range', stage: 'focused', instant: false, selected: 'vehicle',
   playing: false, rate: 1, pulse: Math.round((pulseCount(DEFAULTS) - 1) * 0.61), maximum: null }
 let config = { ...DEFAULTS }, sandbox, frame, acquisition, revision = 1, activeRevision = 0
-let study = createStudy(curriculum), updateVisualization
+let study = createStudy(curriculum), updateVisualization, lastStudy = '0A-1', lastAnalysis = '2-1'
 const studyCard = $('study-card')
-const studyContext = () => view.mode === 'study' ? currentLesson(study) : null
+const isGuided = () => view.mode === 'study' || view.mode === 'analysis'
+const space = createSpace($('space-card'),$('space-intro'))
+const studyContext = () => isGuided() ? currentLesson(study) : null
 let request = 0, sent = 0, scheduled = false, pending = false, startTime = 0, startPulse = 0
 const optical = createScene($('optical'),false,selectObject)
 const geometry = createScene($('geometry'),true,selectObject)
@@ -47,6 +52,8 @@ function updateControls() {
   $('frequency').value = config.frequency
   $('quality').value = config.quality
   $('clutter').checked = config.clutter
+  $('urban-options').hidden = config.scenario !== 'urban'
+  $('urban-density').value = config.urbanDensity
   all('[data-scenario]').forEach(el => el.setAttribute('aria-pressed',el.dataset.scenario === config.scenario))
 }
 
@@ -61,13 +68,16 @@ function send() {
   if (pending) return
   pending = true
   const newAcquisition = activeRevision !== revision
+  if (view.mode === 'space') { pending = false; return }
   if (newAcquisition) status('COMPUTING','busy')
   sent = request
   const lesson = studyContext()?.lesson
   const comparison = lesson && { id: lesson.id, baseline: lesson.baseline, profile: lesson.profile, time: lesson.time,
-    visualBandwidth: lesson.visual === 'bandwidth' ? lesson.controls[0].max : undefined }
+    visualBandwidth: lesson.visual.startsWith('bandwidth') ? 72 : undefined,
+    compareImage: lesson.compareImage, apertureMetrics: lesson.id === '3', motionExample: lesson.visual === 'doppler',
+    instant: lesson.instant }
   worker.postMessage({ revision, request: sent, config: newAcquisition ? config : null, pulse: view.pulse,
-    instant: view.instant, stage: view.stage, selected: view.selected, study: comparison })
+    instant: view.instant, first: view.windowStart, focusModel:view.focusModel, trajectoryDrift:view.trajectoryDrift, stage: view.stage, selected: view.selected, study: comparison })
   activeRevision = revision
 }
 
@@ -77,6 +87,7 @@ worker.onmessage = ({ data }) => {
     return
   }
   pending = false
+  if (view.mode === 'space') return
   // Commit a complete snapshot only after the worker has finished every view.
   if (data.revision === revision && data.request === request) {
     frame = { ...data, acquisition, tracks: acquisition.tracks, config: { ...config } }
@@ -98,6 +109,7 @@ worker.onmessage = ({ data }) => {
 }
 worker.onerror = event => {
   pending = false
+  if (view.mode === 'space') return
   setPlaying(false)
   status('ENGINE ERROR','error')
   console.error(event.message || 'The simulation worker stopped.')
@@ -108,13 +120,18 @@ function drawPlots() {
   if ((context?.lesson.id || undefined) !== frame?.studyId) return
   plotProfile($('profile'),frame,view.tab,$('contributions').checked,context)
   plotMatrix($('raw'),frame)
-  if (frame?.stage === 'focused') plotImage($('image'),frame,selectObject,options.labels)
+  if (frame?.stage === 'focused') plotImage($('image'),frame,selectObject,options.labels && !blindEvidence())
   else if (frame) {
     $('image').onclick = null
     plotMatrix($('image'),frame,frame.stage,true)
   }
 }
+function blindEvidence() {
+  const current = studyContext()
+  return current?.lesson.evidence && current.step < 2
+}
 function draw() {
+  if (view.mode === 'space') return space.draw()
   if (!frame) return
   const { time, pulse, first, selected, tracks } = frame
   const a = frame.acquisition
@@ -184,7 +201,7 @@ function anchorPlayback() {
   startPulse = view.pulse
 }
 function setPlaying(playing) {
-  if (playing && view.mode === 'study') return
+  if (playing && view.mode !== 'sandbox') return
   if (playing && view.instant) setInstant(false)
   if (playing && view.pulse >= pulseCount(config)-1) setPulse(0)
   const wasPlaying = view.playing
@@ -226,6 +243,7 @@ function updateStudyTarget() {
 function showStudy(focusHeading = false, resetSelection = false) {
   const current = currentLesson(study)
   const { lesson } = current
+  $('app').classList.toggle('evidence',Boolean(blindEvidence()))
   const sameLesson = $('monitors').dataset.lesson === lesson.id
   if (view.maximum && !sameLesson) maximize(view.maximum)
   $('monitors').dataset.lesson = lesson.id
@@ -254,41 +272,72 @@ function applyStudyExperiment(current) {
   const experiment = edits.sceneMix === undefined ? studyConfig({ lesson, edits }) : studyScene(edits.sceneMix)
   if (Object.entries(experiment).some(([key, value]) => config[key] !== value)) editConfig(experiment)
   const stage = lesson.controls.find(control => control.key === 'stage')
+  const focusControl = lesson.controls.find(control => control.key === 'focusModel')
+  view.focusModel = focusControl?.values[edits.focusModel]
+  view.trajectoryDrift = edits.trajectoryDrift
   view.stage = stage?.values[edits.stage] ?? lesson.stage
   $('stage').value = view.stage
   const aperture = lesson.controls.find(control => control.key === 'pulses')
   const count = pulseCount(config)
-  setPulse(aperture ? (aperture.values[edits.pulses] ?? 1)-1
+  const pulseWindow = aperture?.values[edits.pulses] ?? 1
+  view.windowStart = aperture ? Math.floor((count-pulseWindow)/2) : undefined
+  setPulse(aperture ? view.windowStart+pulseWindow-1
     : edits.pulseIndex ?? Math.round((edits.time ?? lesson.time) / DURATION * (count - 1)))
   $('timeline-label').textContent = lesson.controls.some(control => ['time','pulses','pulseIndex'].includes(control.key))
     ? 'STUDY FLIGHT POSITION' : 'FIXED EXPERIMENT POSITION'
 }
 
+function setSpaceLabels(enabled) {
+  const names = enabled ? ['Orbital Ground Track','Spherical Radar Geometry','Orbital Signal','Swath Coverage']
+    : ['Optical View','Radar Geometry','Received Signal','SAR Image']
+  ;['optical','geometry','signal','image'].forEach((id,i) => { $('title-'+id).textContent = names[i] })
+  if (enabled) {
+    $('image').onclick = null
+    if (view.maximum) maximize(view.maximum)
+  }
+}
+
 function setMode(mode) {
   if (view.mode === mode) return
+  const prior = view.mode
   setPlaying(false)
-  const studying = mode === 'study'
-  view.mode = mode
-  $('app').classList.toggle('studying',studying)
-  $('study-mode').setAttribute('aria-pressed',studying)
-  $('sandbox-mode').setAttribute('aria-pressed',!studying)
-  studyCard.hidden = !studying
-  $('radar-card').hidden = studying
-  $('scenarios-card').hidden = studying
-  document.querySelector('.view-card').hidden = studying
-  all('[data-tab], #stage, #contributions, .transport button, .transport input, .transport select')
-    .forEach(control => { control.disabled = studying })
-  $('timeline-label').textContent = studying ? 'FIXED EXPERIMENT POSITION' : 'FLIGHT TIMELINE'
-  if (studying) {
+  if (prior === 'sandbox') {
     sandbox = { config, tab: view.tab, stage: view.stage, instant: view.instant, pulse: view.pulse,
       selected: view.selected, contributions: $('contributions').checked }
+  } else if (prior === 'space') space.leave()
+  else if (prior === 'study') lastStudy = currentLesson(study).lesson.id
+  else lastAnalysis = currentLesson(study).lesson.id
+  view.mode = mode
+  const studying = isGuided(), orbital = mode === 'space'
+  const app = $('app')
+  app.classList.toggle('studying',studying || orbital)
+  app.classList.toggle('space-mode',orbital)
+  app.classList.remove('evidence')
+  for (const name of ['study','sandbox','analysis','space']) $(name+'-mode').setAttribute('aria-pressed',name===mode)
+  studyCard.hidden = !studying
+  $('space-card').hidden = !orbital
+  $('radar-card').hidden = mode !== 'sandbox'
+  $('scenarios-card').hidden = mode !== 'sandbox'
+  document.querySelector('.view-card').hidden = mode !== 'sandbox'
+  all('[data-tab], #stage, #contributions, .transport button, .transport input, .transport select')
+    .forEach(control => { control.disabled = mode !== 'sandbox' })
+  setSpaceLabels(orbital)
+  if (orbital) {
+    request++
+    status('ORBITAL LAB')
+    $('timeline-label').textContent = 'ORBITAL OBSERVATION'
+    space.enter()
+  } else if (studying) {
     $('contributions').checked = false
+    study = transition(study,{type:'select',value:mode==='analysis'?lastAnalysis:lastStudy})
     showStudy()
   } else {
+    view.windowStart = view.focusModel = view.trajectoryDrift = undefined
     delete $('monitors').dataset.lesson
     all('.study-highlight').forEach(panel => panel.classList.remove('study-highlight'))
+    $('timeline-label').textContent = 'FLIGHT TIMELINE'
     view.stage = sandbox.stage
-    $('stage').value = view.stage
+    $('stage').value = sandbox.stage
     $('contributions').checked = sandbox.contributions
     selectTab(sandbox.tab)
     setInstant(sandbox.instant)
@@ -298,13 +347,23 @@ function setMode(mode) {
   }
 }
 
-$('sandbox-mode').onclick = () => setMode('sandbox')
-$('study-mode').onclick = () => setMode('study')
+for (const mode of ['sandbox','study','analysis','space']) $(mode+'-mode').onclick = () => setMode(mode)
 studyCard.onclick = e => {
+  const destination = e.target.closest('[data-lesson-id]')
+  if (destination) {
+    studyCard.querySelector('dialog').close()
+    study = transition(study, { type: 'select', value: destination.dataset.lessonId })
+    showStudy(true)
+    return
+  }
   const button = e.target.closest('button[data-study-action]')
   const target = e.target.closest('button[data-study-target]')
   if (target) selectObject(target.dataset.studyTarget)
-  if (!button || button.disabled || view.mode !== 'study') return
+  if (!button || button.disabled || !isGuided()) return
+  if (button.dataset.studyAction === 'choose') {
+    studyCard.querySelector('dialog').showModal()
+    return
+  }
   const next = transition(study, { type: button.dataset.studyAction })
   if (next === study) return
   study = next
@@ -312,14 +371,14 @@ studyCard.onclick = e => {
 }
 studyCard.onchange = e => {
   const action = e.target.dataset.studyAction
-  if (!action || view.mode !== 'study') return
+  if (!action || !isGuided()) return
   study = transition(study, { type: action, value: action === 'reference' ? e.target.checked : Number(e.target.value) })
   updateStudyNavigation(studyCard,currentLesson(study),frame?.revision !== revision)
   if (action === 'reference') drawPlots()
 }
 studyCard.oninput = e => {
   const key = e.target.dataset.studyControl
-  if (!key || view.mode !== 'study') return
+  if (!key || !isGuided()) return
   const next = transition(study, { type: 'edit', key, value: Number(e.target.value) })
   if (next === study) return
   study = next
@@ -343,6 +402,7 @@ all('.slider-label input').forEach(el => el.oninput = sandboxOnly(() => editConf
 $('frequency').onchange = sandboxOnly(e => editConfig({ frequency: +e.target.value }))
 $('quality').onchange = sandboxOnly(e => editConfig({ quality: e.target.value }))
 $('clutter').onchange = sandboxOnly(e => editConfig({ clutter: e.target.checked }))
+$('urban-density').onchange = sandboxOnly(e => editConfig({ urbanDensity:e.target.value }))
 all('[data-option]').forEach(el => el.onchange = () => { options[el.dataset.option] = el.checked; draw() })
 all('[data-tab]').forEach(el => el.onclick = () => selectTab(el.dataset.tab))
 $('contributions').onchange = () => { drawPlots(); updateSignalKey() }
@@ -374,8 +434,8 @@ function maximize(id) {
 }
 all('.maximize').forEach(el => el.onclick = () => maximize(el.dataset.panel))
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && view.maximum && !$('about').open) maximize(view.maximum)
-  if (e.code === 'Space' && !e.repeat && e.target === document.body && !$('about').open) {
+  if (e.key === 'Escape' && view.maximum && !document.querySelector('dialog[open]')) maximize(view.maximum)
+  if (e.code === 'Space' && !e.repeat && e.target === document.body && !document.querySelector('dialog[open]')) {
     e.preventDefault()
     setPlaying(!view.playing)
   }
@@ -426,6 +486,7 @@ const resize = new ResizeObserver(() => {
   redrawQueued = true
   requestAnimationFrame(() => {
     redrawQueued = false
+    if (view.mode === 'space') return space.draw()
     optical.draw()
     geometry.draw()
     drawPlots()

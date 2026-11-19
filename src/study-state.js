@@ -14,6 +14,17 @@ export function currentLesson(state) {
   return { lesson, ...state.progress[lesson.id] || initial() }
 }
 
+export function lessonStatus(state, lesson) {
+  const progress = state.progress[lesson.id]
+  if (progress?.confirmed === lesson.check.correct) return 'Completed'
+  return progress ? 'In progress' : 'Not started'
+}
+
+export function answerFeedback(question, answer) {
+  if (answer === null) return 'pending'
+  return answer === question.correct ? 'correct' : 'try-again'
+}
+
 export function canAdvance(current) {
   switch (current.step) {
     case 0: return current.prediction !== null
@@ -41,6 +52,10 @@ export function studyConfig({ lesson, edits }) {
 export function transition(state, { type, key, value }) {
   const { lesson, ...current } = currentLesson(state)
   const save = next => ({ ...state, progress: { ...state.progress, [lesson.id]: next } })
+  if (type === 'select') {
+    const index = state.lessons.findIndex(item => item.id === value)
+    return index < 0 ? state : { ...state, index, complete: false }
+  }
   if (type === 'repeat') return { ...save(initial()), complete: false }
   if (type === 'back') {
     if (state.complete) return { ...state, complete: false }

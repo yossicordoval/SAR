@@ -1,3 +1,4 @@
+import { blockedByBuilding, terrainStrength, urbanBuildings } from './environments.js'
 export const C = 299792458
 export const DURATION = 8
 export const PULSE_DURATION = 180e-9
@@ -11,13 +12,15 @@ export const QUALITY = {
 export const DEFAULTS = {
   altitude: 530, speed: 82, look: 33, frequency: 42, bandwidth: 64, prf: 24,
   noise: 0.024, clutter: true, scenario: 'road', quality: 'interactive',
-  targetX: 12, targetY: 12, targetSpeed: 0, heading: 112, rcs: 1,
+  targetX: 12, targetY: 12, targetSpeed: 0, heading: 112, rcs: 1, urbanDensity: 'medium',
 }
 
 export const SCENARIOS = [
   { id: 'road', name: 'Vehicle on dirt road', detail: 'Stationary target', icon: 'truck' },
   { id: 'rocks', name: 'Rock field', detail: 'Multiple scatterers', icon: 'mountain' },
   { id: 'moving', name: 'Moving vehicle', detail: 'Motion and Doppler', icon: 'move' },
+  { id: 'urban', name: 'Urban blocks', detail: 'Roof echoes and radar shadow', icon: 'layers' },
+  { id: 'materials', name: 'Surface patches', detail: 'Water, soil and built surfaces', icon: 'mountain' },
   { id: 'water', name: 'Water’s edge', detail: 'Surface contrast', icon: 'waves' },
 ]
 
@@ -36,7 +39,8 @@ export function reflectivity(x, y, scenario) {
 
 export function sceneObjects(config) {
   if (config.scenario === 'study-point') return [
-    { id: 'point-a', label: 'Reflector A', x: config.targetX, y: config.targetY, z: 0, strength: 2.6 },
+    { id: 'point-a', label: 'Reflector A', x: config.targetX, y: config.targetY, z: 0, strength: 2.6,
+      vx: config.targetSpeed*Math.cos(config.heading*Math.PI/180), vy: config.targetSpeed*Math.sin(config.heading*Math.PI/180) },
   ]
   if (config.scenario === 'study-pair') {
     // Choose equal carrier phase modulo one cycle at the demonstration pulse.
@@ -48,6 +52,11 @@ export function sceneObjects(config) {
       { id: 'point-b', label: 'Reflector B', x: 0, y: separation, z: 0, strength: 2.6 },
     ]
   }
+  if (config.scenario === 'study-several') return [
+    { id: 'point-a', label: 'Reflector A', x: -70, y: -43, z: 0, strength: 2.6 },
+    { id: 'point-b', label: 'Reflector B', x: 56, y: 20, z: 0, strength: 2.25 },
+    { id: 'point-c', label: 'Reflector C', x: 16, y: 71, z: 0, strength: 0.4 },
+  ]
   const objects = [{ id: 'vehicle', label: 'Survey vehicle', x: config.targetX, y: config.targetY, z: 2,
     vx: config.targetSpeed * Math.cos(config.heading * Math.PI / 180),
     vy: config.targetSpeed * Math.sin(config.heading * Math.PI / 180), strength: 2.6 * config.rcs }]
@@ -83,19 +92,24 @@ export function pulseTime(config, index) {
   return DURATION * index / (pulseCount(config) - 1)
 }
 
-function gatherScatterers(config, count, objects) {
+function gatherScatterers(config, count, objects, buildings) {
   const rng = random(6724)
   const ground = Array.from({ length: count }, () => {
     const x = (rng() * 2 - 1) * AREA.x
     const y = (rng() * 2 - 1) * AREA.y
-    const strength = reflectivity(x, y, config.scenario) * (0.4 + 0.8 * rng()) * Math.sqrt(560 / count) * 0.38
+    const strength = terrainStrength(x,y,config,reflectivity(x,y,config.scenario)) * (0.4 + 0.8 * rng()) * Math.sqrt(560 / count) * 0.38
     return { x, y, z: 0, strength, bias: rng() * 2 * Math.PI, group: 'ground' }
   })
   const details = objects.flatMap(obj => obj.id === 'vehicle'
     ? [[0, 0, 1], [-5, -2.2, 0.56], [5, 2.1, 0.46], [3, -2, 0.63], [-3, 2, 0.52]].map(([dx, dy, gain], index) =>
       ({ ...obj, x: obj.x + dx, y: obj.y + dy, strength: obj.strength * gain, bias: index * 0.44, group: obj.id }))
     : [{ ...obj, bias: 0.4, group: obj.id }])
-  return [...(config.clutter ? ground : []), ...details]
+  const roofs = buildings.flatMap(({x,y,hx,hy,height},i) => [
+    {x,y,z:height,strength:1.15,bias:i*.5,group:'ground'},
+    {x:x-hx*.7,y:y-hy*.65,z:height,strength:.65,bias:i*.4,group:'ground'},
+    {x,y:y-hy-.1,z:.1,strength:1.65,bias:i*.35,group:'ground'},
+  ])
+  return [...(config.clutter ? [...ground,...roofs] : []), ...details]
 }
 
 function chirp(config, dr) {
@@ -130,12 +144,13 @@ export function createAcquisition(config) {
   const { bins: desiredBins, ground, width, height } = QUALITY[config.quality]
   const count = pulseCount(config)
   const objects = sceneObjects(config)
-  const scatterers = gatherScatterers(config, ground, objects)
+  const buildings = config.scenario === 'urban' ? urbanBuildings(config.urbanDensity) : []
+  const scatterers = gatherScatterers(config, ground, objects, buildings)
   const satY = platform(config, 0).y
   const minY = Math.min(...objects.map(o => o.y - Math.abs(o.vy || 0) * DURATION / 2), -AREA.y) - 12
   const maxY = Math.max(...objects.map(o => o.y + Math.abs(o.vy || 0) * DURATION / 2), AREA.y) + 12
   const maxX = Math.max(...objects.map(o => Math.abs(o.x) + Math.abs(o.vx || 0) * DURATION / 2), AREA.x) + 12
-  const minRange = Math.hypot(config.altitude - 8, Math.max(0, minY - satY)) - 42
+  const minRange = Math.hypot(config.altitude - Math.max(8,...buildings.map(block => block.height)), Math.max(0, minY - satY)) - 42
   const maxRange = Math.hypot(config.altitude, maxY - satY, maxX + config.speed * DURATION / 2) + 42
   const minimumBins = Math.ceil((maxRange - minRange) * 2 * config.bandwidth * 1e6 / C) + 1
   const bins = Math.max(desiredBins, minimumBins)
@@ -145,7 +160,7 @@ export function createAcquisition(config) {
   const i = buffer(), q = buffer(), rangeI = buffer(), rangeQ = buffer()
   const tracks = Object.fromEntries(objects.map(o => [o.id, []]))
   const noise = random(7993)
-  const state = { config, count, bins, width, height, minRange, dr, wave, scatterers, tracks, i, q, rangeI, rangeQ }
+  const state = { config, count, bins, width, height, minRange, dr, wave, scatterers, buildings, tracks, i, q, rangeI, rangeQ }
   for (let p = 0; p < count; p++) {
     const [re, im] = synthesizePulse(state, p)
     for (let b = 0; b < bins; b++) {
@@ -162,7 +177,7 @@ export function createAcquisition(config) {
 }
 
 function synthesizePulse(state, pulse, filter) {
-  const { bins, minRange, dr, wave, config, scatterers } = state
+  const { bins, minRange, dr, wave, config, scatterers, buildings } = state
   const re = new Float32Array(bins), im = new Float32Array(bins)
   const t = pulseTime(config, pulse)
   const sat = platform(config, t)
@@ -174,6 +189,7 @@ function synthesizePulse(state, pulse, filter) {
     const dx = s.x + (s.vx || 0) * (t - DURATION / 2) - sat.x
     const groundY = s.y + (s.vy || 0) * (t - DURATION / 2)
     const dy = groundY - sat.y
+    if (buildings.length && blockedByBuilding(sat,{x:sat.x+dx,y:groundY,z:s.z},buildings)) continue
     const r = Math.sqrt(dx * dx + dy * dy + (s.z - sat.z) ** 2)
     const cell = (r - minRange) / dr
     const beam = 0.5 ** ((dx / FOOTPRINT.x) ** 2 + (groundY / FOOTPRINT.y) ** 2)

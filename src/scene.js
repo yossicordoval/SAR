@@ -1,3 +1,4 @@
+import { terrainStrength, urbanBuildings } from './environments.js'
 import { AREA, FOOTPRINT, platform, random, reflectivity, road, sceneObjects } from './physics.js'
 
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n))
@@ -152,7 +153,7 @@ export function createScene(canvas, geometry, onSelect) {
     for (let y = -ybound; y < ybound; y += step) {
       for (let x = -xbound; x < xbound; x += step) {
         const x2 = Math.min(x + step, xbound), y2 = Math.min(y + step, ybound)
-        const s = reflectivity(x + step * 0.51, y + step * 0.51, config.scenario)
+        const s = terrainStrength(x,y,config,reflectivity(x+step*.51,y+step*.51,config.scenario))
         const f = Math.sin(x * 0.48 + y * 0.32)
         const land = geometry ? [29 + s * 18, 52 + s * 19, 54 + s * 13] : [111 + s * 32, 116 + s * 26, 78 + s * 27]
         const a = p(x,y), b = p(x2,y), c = p(x2,y2), d = p(x,y2)
@@ -182,7 +183,18 @@ export function createScene(canvas, geometry, onSelect) {
       const depth = projected.reduce((sum, v) => sum + v[2], 0) / projected.length
       faces.push({ projected, color, edge, depth })
     }
+    if (config.scenario === 'urban') {
+      for (const x of [-85,0,85]) poly([p(x-8,-ybound,.75),p(x+8,-ybound,.75),p(x+8,ybound,.75),p(x-8,ybound,.75)],'#46525c')
+      for (const y of [7,80]) poly([p(-xbound,y-7,.8),p(xbound,y-7,.8),p(xbound,y+7,.8),p(-xbound,y+7,.8)],'#46525c')
+      for (const {x,y,hx,hy,height} of urbanBuildings(config.urbanDensity)) {
+        const base = [p(x-hx,y-hy),p(x+hx,y-hy),p(x+hx,y+hy),p(x-hx,y+hy)]
+        const roof = base.map(([u,v]) => p(u,v,height))
+        base.forEach((a,i) => add([a,base[(i+1)%4],roof[(i+1)%4],roof[i]],i%2 ? '#536a7e' : '#384958','#293b4d'))
+        add(roof,height>=50 ? '#82a1b2' : '#708281','#a9bbc1')
+      }
+    }
     for (const [x, y, variant, scale, angle] of detail) {
+      if (config.scenario === 'urban' && (variant < .88 || urbanBuildings(config.urbanDensity).some(b => Math.abs(x-b.x) < b.hx+9 && Math.abs(y-b.y) < b.hy+9))) continue
       if (Math.abs(y - road(x)) < 18 || Math.abs(x) > xbound - 8 || Math.abs(y) > ybound - 8 ||
         reflectivity(x,y,config.scenario) < 0.1 || (geometry && variant < 0.45)) continue
       const size = scale * (geometry ? 1.35 : 1.65) + 0.18

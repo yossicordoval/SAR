@@ -79,7 +79,7 @@ export const parameterLessons = [
     'Ground clutter comes from physical scattering across the illuminated scene.',
     'Why can clutter remain after focusing?', 'Image formation automatically deletes all ground echoes.',
     'Distributed ground reflections enter the receiver.', 'Target, waveform, and receiver noise.',
-  ], { instant: true, magnitude: 12, zoom: 175, panels: ['optical', 'signal', 'image'] }),
+  ], { instant: true, magnitude: 12, zoom: 175, compareImage: true, panels: ['optical', 'signal', 'image'] }),
   lesson('0A-8', 'Receiver noise', 'noise', noise, [
     'Receiver electronics can contribute fluctuations even without a strong echo.',
     'Watch the fluctuations on either side of the weak target peak.',
@@ -89,7 +89,7 @@ export const parameterLessons = [
     'More receiver noise → weaker detectability at fixed echo strength.',
     'Does a higher noise setting change the target’s true range?', 'Yes, more noise shifts the target.',
     'The amplitude of receiver fluctuations.', 'The target return and its physical delay.',
-  ], { baseline: { ...vehicle, rcs: 0.2 }, instant: true, profile: 'range', zoom: 80 }),
+  ], { baseline: { ...vehicle, rcs: 0.2 }, instant: true, profile: 'range', zoom: 80, compareImage: true, panels: ['signal','image'] }),
   lesson('0A-9', 'Target speed', 'motion', targetSpeed, [
     'Target motion during a pass changes the sequence of ranges and phases measured by the radar.',
     'Compare the dashed stationary reference with the measured Doppler and focused image.',
@@ -99,7 +99,7 @@ export const parameterLessons = [
     'Target motion alters range and phase history and can shift or defocus the reconstruction.',
     'What causes moving-target defocus?', 'The pulse stops reflecting when the target moves.',
     'Target positions during the pass and resulting range, phase, and Doppler.', 'Stationary focusing assumption and radar waveform.',
-  ], { baseline: { ...moving, targetSpeed: 0 }, time: 7, tab: 'doppler', panels: ['geometry', 'signal', 'image'] }),
+  ], { baseline: { ...moving, targetSpeed: 0 }, time: 7, tab: 'doppler', compareImage: true, panels: ['geometry', 'signal', 'image'] }),
   lesson('0A-10', 'Target heading & line of sight', 'vectors', slider('heading', 'Target heading', '°', 0, 360, 1), [
     'Only velocity projected onto the line of sight contributes to instantaneous range rate.',
     'Turn the heading and compare its projection, the simulated range rate, and Doppler.',
@@ -109,7 +109,7 @@ export const parameterLessons = [
     'Rotating velocity changes its radial projection and therefore the Doppler shift.',
     'What does perpendicular target motion contribute at that instant?', 'The largest possible radial component.',
     'The relative radial velocity and Doppler.', 'Target speed and carrier wavelength.',
-  ], { baseline: { ...moving, heading: 0 }, time: 4, tab: 'doppler', metrics: [radial, doppler] }),
+  ], { baseline: { ...moving, heading: 0 }, time: 4, tab: 'doppler', compareImage: true, panels: ['geometry','signal','image'], metrics: [radial, doppler] }),
   lesson('0A-11', 'Target position', 'motion', position, [
     'Move a stationary target across track and observe its different distance from the same platform.',
     'Compare the sight line, range history, raw curve, and image location.',
@@ -129,7 +129,7 @@ export const parameterLessons = [
     'A finer numerical grid samples the same physics more densely.',
     'What does image sampling quality change?', 'The true target geometry.',
     'Numerical sample counts and reconstruction grid size.', 'Radar geometry, bandwidth, and PRF.',
-  ], { panels: ['optical', 'image'], metrics: [range, { label: 'Reconstruction pixels', unit: '', digits: 0, read: c => QUALITY[c.quality].width * QUALITY[c.quality].height }] }),
+  ], { panels: ['optical', 'image'], compareImage: true, metrics: [range, { label: 'Reconstruction pixels', unit: '', digits: 0, read: c => QUALITY[c.quality].width * QUALITY[c.quality].height }] }),
 ]
 
 export const monitorLessons = [
@@ -160,11 +160,11 @@ export const monitorLessons = [
     'The Range Profile places each received echo at its equivalent slant range.',
     'How is the horizontal coordinate assigned?', 'Targets are sorted by brightness.',
   ], { time: 4, instant: true, zoom: 170, sceneMix: 0, magnitude: 12, metrics: [range, delay] }),
-  lesson('0B-4', 'I/Q monitor', 'phasor', position, [
+  lesson('0B-4', 'I/Q monitor', 'iq', position, [
     'Each complex receiver sample has an in-phase component I and a quadrature component Q.',
     'Move the reflector and watch its propagation phase change. The diagram also adds a second illustrative contribution.',
     'How do two simultaneous scatterer echoes combine?', ['Their complex vectors add.', 'Their magnitudes always add.', 'Their phases are discarded.'],
-    'I and Q are the horizontal and vertical components of a complex vector. Coherent summation can reinforce or cancel even when both echoes are strong.',
+    'I and Q preserve a sample’s amplitude and phase. Two equal samples at 0° and 180° cancel when added, even though their magnitudes match. The processor uses predicted propagation to rotate samples from the same ground location into alignment before adding them.',
     'Magnitude = √(I² + Q²). Phase = atan2(Q, I).',
     'I and Q preserve both magnitude and phase for coherent processing.',
     'Why keep both I and Q?', 'One real number always gives the full phase.',
@@ -218,7 +218,7 @@ export const processLessons = [
     'SAR reconstructs ground reflectivity from repeated phase-preserving observations.',
     'Why repeat the transmission as the platform moves?', 'SAR needs multiple independent pictures of Ground Truth.',
   ], { stage: 'raw', time: 6, panels: ['geometry', 'signal', 'raw', 'image'] }),
-  lesson('2', 'Two reflectors & range resolution', 'bandwidth', bandwidth, [
+  lesson('2', 'Two reflectors & range resolution', 'bandwidth-review', bandwidth, [
     'Two nearby stationary reflectors generate two delayed copies of the transmitted chirp.',
     'Change bandwidth and compare the compressed peaks and focused image.',
     'What can separate two nearby delays?', ['A wider chirp bandwidth.', 'A higher PRF alone.', 'A longer pass alone.'],
@@ -226,7 +226,7 @@ export const processLessons = [
     'Ideal slant-range resolution is approximately c/(2B).',
     'Wider bandwidth improves separation of reflectors with distinct close delays.',
     'What improves delay discrimination?', 'Merely collecting echoes more often.',
-  ], { baseline: pair, zoom: 12, magnitude: 6, time: 4, panels: ['signal', 'image'], targets: [{ id: 'point-a', label: 'Reflector A' }, { id: 'point-b', label: 'Reflector B' }] }),
+  ], { baseline: pair, compareImage: true, zoom: 12, magnitude: 6, time: 4, panels: ['signal', 'image'], targets: [{ id: 'point-a', label: 'Reflector A' }, { id: 'point-b', label: 'Reflector B' }] }),
   lesson('3', 'Synthetic aperture & azimuth localization', 'focus', aperture, [
     'Build the reconstruction from 1, 5, 20, 50, or all acquired pulses.',
     'Follow the increasing spatial extent of the sampled flight path and the image’s along-track response.',
@@ -235,12 +235,18 @@ export const processLessons = [
     'The processor tests the range history predicted for each pixel across the observed aperture.',
     'A longer, adequately sampled coherent aperture can sharpen along-track localization.',
     'What supplies the along-track information?', 'A single pulse’s delay by itself.',
-  ], { time: 0, panels: ['geometry', 'raw', 'image'] }),
-  lesson('4', 'Doppler & phase history', 'phasor', carrier, [
+  ], { time: 4, baseline:{...single,quality:'high'}, panels: ['geometry', 'raw', 'image'], compareImage: true,
+    metricGuide: '−3 dB width measures the connected peak down to half power on the along-track cut through the reflector. A dash means the response reaches the edge. The pulse window stays centered near closest approach.',
+    metrics: [
+      { label: 'Pulses used', unit: '', digits: 0, read: (c,t,p,m) => m?.pulses },
+      { label: 'Coherent aperture', unit: 'm', digits: 1, read: (c,t,p,m) => m?.aperture },
+      { label: 'Along-track −3 dB width', unit: 'm', digits: 1, read: (c,t,p,m) => m?.azimuthWidth },
+    ] }),
+  lesson('4', 'Doppler & phase history', 'doppler', carrier, [
     'Doppler tells how quickly echo phase changes. The phase history is needed for focusing.',
     'Compare Doppler and replay the phase wheel, then inspect the current focused point.',
     'How does larger Doppler magnitude affect phase?', ['It changes more cycles per second.', 'It fixes phase at zero.', 'It changes the flight path.'],
-    'The echo phase winds as the range changes. A pixel’s predicted propagation phase is removed before summation so a stationary return adds coherently.',
+    'As the platform approaches the reflector, slant range decreases and received phase advances. The slope of unwrapped phase is Doppler. After closest approach, increasing range reverses the sign. A moving target changes the phase history and can defeat stationary phase correction.',
     'fᴅ = (1/2π) dφ/dt, with propagation phase φ = −4πR/λ.',
     'Doppler is phase rate. Focusing uses the phase history across pulses.',
     'What does coherent focusing need to account for?', 'Only the average magnitude over time.',
@@ -253,10 +259,101 @@ export const processLessons = [
     'The uncompensated phase error is −4π(R_actual − R_predicted)/λ.',
     'Unmodeled target motion can shift or defocus a SAR reconstruction.',
     'Why does the strongest image response move or spread?', 'The receiver changes the number of transmitted pulses.',
-  ], { baseline: { ...moving, targetSpeed: 0 }, time: 7, tab: 'doppler', panels: ['geometry', 'raw', 'image'] }),
+  ], { baseline: { ...moving, targetSpeed: 0 }, time: 7, tab: 'doppler', compareImage: true, panels: ['geometry', 'raw', 'image'] }),
 ]
 
 export function studyScene(index) {
   if (index === 0) return single
   return { ...pair, bandwidth: 72, clutter: index >= 2, noise: index === 3 ? 0.35 : 0 }
 }
+
+const evidence = (id, title, visual, control, baseline, prompt, options, correct, why, extra = {}) => lesson(
+  id,title,visual,control,[
+    'Inspect the reconstructed image as evidence. Then change one acquisition or scene assumption and test your interpretation.',
+    'Compare the bright responses and their shape across range and along track. The green ground-truth marker appears when you reach Explain.',
+    prompt,options,why,'A SAR image is the magnitude of a coherent sum evaluated at candidate ground locations.',
+    why,prompt,options[(correct+1)%options.length],
+  ],{ baseline, time: 7, evidence: true, compareImage: true, panels: ['image','signal'],
+    predict: { prompt,options,correct }, check: extra.check ?? { prompt,options,correct,feedback: why }, ...extra }
+)
+
+export const analysisLessons = [
+  evidence('2-1','Count distinguishable reflectors','focus',noise,{...single,scenario:'study-several',noise:.32,quality:'medium'},
+    'How many dominant compact returns stand out over the rest of the image?',
+    ['One dominant return.','Two dominant returns, with weaker evidence elsewhere.','Every visible bright pixel is a separate object.'],1,
+    'A compact peak supports a scattering location. Closely spaced targets can merge, weak targets can disappear, and clutter can produce peaks.', {
+      check:{prompt:'The background falls when noise is reduced and a third stable peak becomes visible. What changed?',options:['The scene acquired another target.','A previously obscured return became distinguishable.','The carrier wavelength grew.'],correct:1,feedback:'Lower receiver noise can reveal an existing return. Count distinguishable responses before inferring an exact object count.'},
+    }),
+  evidence('2-2','Recognize moving-target signatures','motion',targetSpeed,{...moving,targetSpeed:28},
+    'A response is displaced relative to a registered map and becomes tighter after accounting for motion. What does that support?',
+    ['Target motion is a plausible explanation.', 'The two images prove its complete velocity.', 'A wider chirp must have moved the target.'],0,
+    'An unmodeled moving target can shift or spread because the stationary phase correction is wrong. A displacement alone is not proof of motion.', {
+      check:{prompt:'Which competing explanation should you check before concluding a displaced response is moving?',options:['The display font changed.','The vehicle has a different name.','A map registration or trajectory error.'],correct:2,feedback:'An independent registration or trajectory error can also move apparent positions. Compare stable reference targets.'},
+    }),
+  evidence('2-3','Compare range and azimuth blur','bandwidth-review',bandwidth,pair,
+    'Two scenes share the same flight path. In one image, closely spaced range responses separate. Which change best fits?',
+    ['More receiver noise.', 'The same bandwidth with a different display color.', 'A wider transmitted sweep.'],2,
+    'Extra chirp bandwidth improves discrimination between close delays. A longer aperture primarily adds along-track information.', { time:4, magnitude:6, zoom:12,
+      check:{prompt:'You separate the range responses, but one still stretches along track. Which change addresses the remaining blur?',options:['Only increase receiver noise.','Collect a longer well-sampled coherent aperture.','Separate the center frequencies of the targets.'],correct:1,feedback:'Bandwidth narrows a delay response. More spatially distinct coherent samples improve along-track localization.'} }),
+  evidence('2-4','Infer radial motion from Doppler','vectors',slider('heading','Target heading','°',0,360,1),{...moving,heading:90},
+    'After accounting for the platform, a target at λ = 6 m has Doppler +4 Hz. What can you infer?',
+    ['It must be travelling north at 12 m/s.', 'Its radial contribution is −12 m/s, toward the sensor.', 'Its radial contribution is +24 m/s, away from the sensor.'],1,
+    'Use vᵣ = −λfᴅ/2. A single monostatic frequency shift gives a line-of-sight component, with many possible full velocity vectors.', { time:4, tab:'doppler', metrics:[radial,doppler],
+      check:{prompt:'A second vehicle has the same Doppler after accounting for platform motion. Which inference is justified?',options:['It has the same line-of-sight velocity component.','It follows the same heading.','Its speed must be equal in all directions.'],correct:0,feedback:'Doppler constrains the radial component. The perpendicular component remains unknown.'} }),
+  evidence('2-5','Choose a sharpening strategy','focus',aperture,single,
+    'A stationary point forms a thin range arc from one pulse. What would best localize it along track?',
+    ['Combine a longer, adequately sampled coherent aperture.', 'Use the same pulse twice.', 'Change only the display contrast.'],0,
+    'A sequence from different positions provides distinct path lengths. Correcting and summing those phases can localize a stationary return along track.', { time:4, baseline:{...single,quality:'high'} }),
+]
+
+const advanced = (id,title,visual,control,baseline,prompt,options,correct,why,extra) =>
+  ({ ...evidence(id,title,visual,control,baseline,prompt,options,correct,why,extra), evidence:false,
+    intro: 'Compare the measured echo with the geometry or surface that produced it.',
+    watch: 'Compare the highlighted monitors and the baseline/current results.' })
+
+export const advancedLessons = [
+  advanced('3-1','Off-nadir geometry & incidence','delay',slider('look','Off-nadir angle','°',18,53,1),single,
+    'With altitude fixed, which look uses a longer slant path?', ['A steeper downward look.', 'A more sideways look.', 'Both have equal paths.'],1,
+    'A more sideways look lengthens the path to the flat ground. Over a slope, local incidence is measured from the slope normal and can differ from the look angle. Use the terrain geometry when comparing backscatter.', { instant:true, metrics:[range,delay] }),
+  advanced('3-2','Urban shadows & strong corners','environment',choices('urbanDensity','Building density',['sparse','medium','dense'],['Sparse','Medium','Dense']),
+    {...vehicle,scenario:'urban',urbanDensity:'sparse',clutter:true},
+    'A dark strip lies behind a tall block. Which observation best tests whether it is radar shadow?',
+    ['Observe from a different side and see whether the dark strip moves.', 'Turn up display gain until it vanishes.', 'Double the PRF from the same look direction.'],0,
+    'An opaque obstruction can hide part of the scene. More viewing angles can fill missing coverage. Wall-ground corners can give bright returns. This model uses geometric occlusion and simplified corner scatterers.', { panels:['optical','geometry','image'], magnitude:15, zoom:170 }),
+  advanced('3-3','Slopes, foreshortening & layover','environment',slider('look','Off-nadir angle','°',18,53,1),
+    {...vehicle,scenario:'urban',urbanDensity:'dense',clutter:true,look:18},
+    'A building roof has a shorter slant range than its base. Where can it appear under flat-ground focusing?',
+    ['Behind the base in range.', 'At the same location for every angle.', 'In front of the base in range.'],2,
+    'A facing slope can compress in slant-range coordinates. If range order reverses, the upper surface can lay over the lower one. A terrain model or another viewing angle can help separate the contributions.', { panels:['geometry','image'], magnitude:15, zoom:170 }),
+  advanced('3-4','Surface roughness & viewing angle','environment',carrier,
+    {...vehicle,scenario:'materials',clutter:true},
+    'A water patch is dark at one look angle. Which explanation is consistent with radar physics?',
+    ['Water has one universal brightness.', 'The smooth surface may reflect energy away from the sensor.', 'The radar cannot transmit over water.'],1,
+    'Roughness relative to wavelength and the surface orientation affect how much energy returns. The patch coefficients are illustrative. Compare other angles and wavelengths before assigning a material from brightness alone.', { panels:['optical','image'], magnitude:12, zoom:175 }),
+  advanced('3-5','Range & azimuth ambiguity','sampling',slider('prf','PRF','Hz',4,48,1),
+    {...single,prf:4},
+    'A higher PRF reduces slow-time aliasing. What trade-off can matter when echoes come from far away?',
+    ['The unambiguous delay interval gets shorter.', 'Every pulse changes color.', 'The physical swath doubles automatically.'],0,
+    'Closely spaced transmissions sample phase more often, but a late echo may be mistaken for one from a later transmission. Choose PRF with both timing and Doppler bandwidth in mind. The ground engine illustrates slow-time aliasing without wrapping echoes between pulses.', { tab:'doppler' }),
+  advanced('3-6','Phase errors & motion compensation','motion',
+    choices('focusModel','Reconstruction hypothesis',['stationary','moving'],['Stationary ground','Known target motion'],true),
+    {...single,targetSpeed:25,heading:90,quality:'high'},
+    'A moving reflector smears under stationary focusing. Which change can correctly align its echoes?',
+    ['Increase chirp bandwidth.','Use the reflector’s predicted path in the phase correction.','Discard the echo phase.'],1,
+    'Apply the known velocity to each candidate pixel’s expected range history. Compare both images at the mid-pass reference position. A matching hypothesis restores coherence to that motion class. Other motions would need other estimates.',
+    { time:8, tab:'doppler', panels:['geometry','image'], focusModel:'stationary',
+      changed:'The paths used to compute candidate delays and phase rotations.', fixed:'The collected pulses, raw echoes, and target motion.' }),
+  advanced('3-7','Strong and weak scatterers','environment',noise,
+    {...single,scenario:'study-several',clutter:true},
+    'A weak response lies next to a bright peak. What else could the weak response be?',
+    ['Always a second vehicle.', 'No physical echo is possible.', 'A sidelobe from the bright scatterer.'],2,
+    'A strong target can mask nearby weak ones through sidelobes or background clutter. Windowing can suppress sidelobes at the cost of broadening the main peak. More looks help distinguish stable targets from random noise.', { panels:['signal','image'], magnitude:12, zoom:170 }),
+  advanced('3-8','Platform trajectory error','motion',
+    slider('trajectoryDrift','Assumed along-track speed error','m/s',0,18,1,{view:true}),
+    single,
+    'Stationary objects smear together after an incorrect navigation update. What should the processor try first?',
+    ['Re-estimate the platform path and repeat focusing.','Interpret every smear as target motion.','Only raise the image brightness.'],0,
+    'The receiver data stayed the same. An along-track speed error in the reconstruction changes predicted delay and phase. Using the correct trajectory restores the stationary scene. Real platforms can use navigation data and autofocus to estimate phase errors.',
+    { time:7, trajectoryDrift:0, panels:['geometry','image'], changed:'The assumed path used for reconstruction.', fixed:'The actual trajectory, scene, and raw measurements.' }),
+
+]

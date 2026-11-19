@@ -1,4 +1,5 @@
-import { monitorLessons, parameterLessons, processLessons } from './curriculum-expanded.js'
+import { reasoningCheck } from './reasoning-questions.js'
+import { advancedLessons, analysisLessons, monitorLessons, parameterLessons, processLessons } from './curriculum-expanded.js'
 import { C, DEFAULTS } from './physics.js'
 
 const isolated = { ...DEFAULTS, scenario: 'study-point', clutter: false, noise: 0, targetX: 0, targetY: 0 }
@@ -8,7 +9,7 @@ const rangeMetrics = [
 ]
 
 export const curriculum = [{
-  id: '0A', title: 'Radar parameters', lessons: [
+  id: '0A', title: 'Radar Parameters', lessons: [
     {
       id: '0A-1', title: 'Geometry, range & delay', visual: 'delay',
       changed: 'Slant range, round-trip delay, and peak position.', fixed: 'Carrier, chirp bandwidth, and reflector strength.',
@@ -74,7 +75,11 @@ export const curriculum = [{
     ...parameterLessons,
   ],
 }, {
-  id: '0B', title: 'Monitors & signals', lessons: monitorLessons,
+  id: '0B', title: 'Reading Signals & Displays', lessons: monitorLessons,
 }, {
-  id: '1', title: 'SAR imaging process', lessons: processLessons,
-}]
+  id: '1', title: 'SAR Image Formation', lessons: processLessons,
+}, {
+  id: '2', title: 'SAR Image Analysis', lessons: analysisLessons,
+}, {
+  id: '3', title: 'Advanced Geometry & Environments', lessons: advancedLessons,
+}].map(phase => ({ ...phase, lessons: phase.lessons.map(reasoningCheck) }))
