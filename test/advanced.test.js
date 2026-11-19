@@ -69,6 +69,8 @@ test('space launch is bounded and orbital study progress survives lesson jumps',
   assert.equal(launchStage(0),0)
   assert.equal(launchStage(1),9)
   let study = createStudy(spaceCurriculum)
+  assert.equal(currentLesson(study).lesson.id,'S0')
+  study = transition(study,{type:'select',value:'S1'})
   study = transition(study,{type:'predict',value:1})
   const other = transition(study,{type:'select',value:'S10'})
   assert.equal(currentLesson(other).lesson.id,'S10')

@@ -1,6 +1,6 @@
 import { C } from './physics.js'
 
-const EARTH_RADIUS = 6_371_000
+export const EARTH_RADIUS = 6_371_000
 const MU = 3.986004418e14
 const rotation = 86164
 const radians = degrees => degrees*Math.PI/180
@@ -8,7 +8,13 @@ const degrees = angle => angle*180/Math.PI
 export const radarBands = { L:1.25, C:5.4, X:9.65 }
 export const orbitalDefaults = {
   altitude: 550, speedScale: 1, band:'C', bandwidth:80, prf:2400, look:30,
-  beam:4, radial:0, terrain:'ocean', urbanDensity:'medium', pathError:0, observation:12,
+  beam:4, radial:0, terrain:'plain', urbanDensity:'medium', focus:'reference', pathError:0, observation:12,
+}
+export const orbitalPresets = {
+  Teaching:{...orbitalDefaults},
+  'L-band':{...orbitalDefaults,band:'L',altitude:690,bandwidth:35,prf:1800},
+  'C-band':{...orbitalDefaults,band:'C',altitude:600,bandwidth:70,prf:2600},
+  'X-band':{...orbitalDefaults,band:'X',altitude:510,bandwidth:120,prf:3200},
 }
 export const orbitalControls = [
   {key:'altitude',label:'Orbital altitude',min:350,max:850,step:10,unit:'km',summary:'Greater height lengthens the echo path and often broadens the footprint.'},
@@ -19,8 +25,9 @@ export const orbitalControls = [
   {key:'look',label:'Off-nadir look angle',min:0,max:68,step:1,unit:'°',summary:'More sideways viewing increases slant range and changes incidence at the surface.'},
   {key:'beam',label:'Elevation beam width',min:1,max:14,step:.5,unit:'°',summary:'A wider beam illuminates a wider swath and spans more echo delays.'},
   {key:'radial',label:'Target radial speed',min:-40,max:40,step:1,unit:'m/s',summary:'Only the velocity component along the sight line contributes to monostatic Doppler.'},
-  {key:'terrain',label:'Terrain context',values:['ocean','rural','urban'],summary:'Surface type, roughness, orientation, and wavelength all influence the echo.'},
+  {key:'terrain',label:'Terrain context',values:['plain','ocean','rural','ridge','urban'],summary:'Surface type, roughness, orientation, and wavelength all influence the echo.'},
   {key:'urbanDensity',label:'Urban density',values:['sparse','medium','dense'],summary:'More buildings introduce more elevated and shadowed ground in the illustrative scene.'},
+  {key:'focus',label:'Focusing surface',values:['reference','elevation'],summary:'Compare the reference sphere with a known elevation model using the same echoes.'},
   {key:'pathError',label:'Extra one-way path',min:0,max:8,step:.1,unit:'cm',summary:'Even a small path error can rotate phase at orbital carrier wavelengths.'},
   {key:'observation',label:'Observation interval',min:2,max:30,step:1,unit:'s',summary:'More time extends the observed track and gives more pulse samples.'},
 ]
@@ -43,7 +50,7 @@ export function orbitalObservation(config) {
   const h = config.altitude*1000, r = EARTH_RADIUS+h
   const horizon = Math.asin(EARTH_RADIUS/r)
   const surface = angle => {
-    if (angle > horizon) return null
+    if (angle > horizon + 1e-12) return null
     const incidence = Math.asin(Math.min(1,r/EARTH_RADIUS*Math.sin(angle)))
     return {
       range: r*Math.cos(angle)-EARTH_RADIUS*Math.cos(incidence),

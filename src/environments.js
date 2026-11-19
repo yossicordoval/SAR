@@ -9,7 +9,11 @@ const blocks = [
 ].map(([x,y,hx,hy,height]) => ({x,y,hx,hy,height}))
 const sparse = blocks.filter((_,i) => i % 3 === 0)
 const medium = blocks.filter((_,i) => i % 4 !== 2)
-export const urbanBuildings = density => density === 'dense' ? blocks : density === 'medium' ? medium : sparse
+const single = [{ x:0,y:22,hx:24,hy:19,height:56 }]
+export const urbanBuildings = density => density === 'single' ? single : density === 'dense' ? blocks : density === 'medium' ? medium : sparse
+export function roofHeight(density,x,y) {
+  return urbanBuildings(density).find(block=>Math.abs(x-block.x)<=block.hx && Math.abs(y-block.y)<=block.hy)?.height ?? 0
+}
 export const onStreet = (x,y) => Math.abs(x) < 19 || Math.abs(y-7) < 13 || Math.abs(y-80) < 8
 
 // Use a segment-to-box intersection for geometric occlusion by an opaque block.

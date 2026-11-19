@@ -1,3 +1,4 @@
+import { terrainAnalysisLessons, terrainLessons } from './terrain-lessons.js'
 import { reasoningCheck } from './reasoning-questions.js'
 import { advancedLessons, analysisLessons, monitorLessons, parameterLessons, processLessons } from './curriculum-expanded.js'
 import { C, DEFAULTS } from './physics.js'
@@ -79,7 +80,9 @@ export const curriculum = [{
 }, {
   id: '1', title: 'SAR Image Formation', lessons: processLessons,
 }, {
-  id: '2', title: 'SAR Image Analysis', lessons: analysisLessons,
+  id: '2', title: 'SAR Image Analysis', lessons: [...analysisLessons,...terrainAnalysisLessons],
 }, {
   id: '3', title: 'Advanced Geometry & Environments', lessons: advancedLessons,
+}, {
+  id: '4', title: 'Terrain and Building Radar', lessons: terrainLessons,
 }].map(phase => ({ ...phase, lessons: phase.lessons.map(reasoningCheck) }))

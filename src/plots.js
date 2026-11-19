@@ -1,3 +1,4 @@
+import { sourceColors } from './terrain.js'
 import { comparisonAxes, historyFraction, rangeFraction } from './study-axes.js'
 import { AREA, DURATION } from './physics.js'
 import { migrationShift } from './processing.js'
@@ -160,7 +161,7 @@ export function plotProfile(canvas, frame, tab, contributions, study) {
 function plotStudyRange(ctx, { x, y, width, height }, frame, { lesson, reference }) {
   const baseline = frame.comparison
   const current = frame.compressed || frame.profiles.echo
-  const points = Object.values(frame.tracks).map(track => track[frame.pulse].range)
+  const points = Object.entries(frame.tracks).map(([id,track])=>[id,track[frame.pulse].range])
   const axes = comparisonAxes(lesson)
   const { left, right, magnitude: max } = axes
   const yAt = v => y + height * (1 - clamp(v / max))
@@ -177,14 +178,15 @@ function plotStudyRange(ctx, { x, y, width, height }, frame, { lesson, reference
   }
   if (reference) curve(baseline.profile, baseline.minRange, baseline.dr, '#a8afcd', true)
   curve(current, frame.acquisition.minRange, frame.acquisition.dr, cyan, false)
-  points.forEach((range, index) => {
+  points.forEach(([id,range], index) => {
     const color = index === 0 ? '#a5f6be' : amber
-    const active = frame.selected === Object.keys(frame.tracks)[index]
+    const active = frame.selected === id
     const px = xAt(range)
     if (px < x || px > x + width) return
     marker(ctx,px,y,height,active ? color : color + 'a0')
     ctx.fillStyle = color
-    ctx.fillText(index === 0 ? 'A' : 'B',px + (index === 0 ? -10 : 3),y + 12)
+    const name = frame.config.scenario==='terrain' ? String(index+1) : String.fromCharCode(65+index)
+    ctx.fillText(name,px+(index===0?-10:3),y+12+(frame.config.scenario==='terrain'?index%3*9:0))
     if (active) {
       ctx.beginPath(); ctx.arc(px,y + 4,2.4,0,Math.PI*2); ctx.fill()
     }
@@ -273,12 +275,17 @@ export function plotImage(canvas, frame, onSelect, highlight = true) {
   if (width < 20 || height < 20) return
   raster.width = a.width; raster.height = a.height
   const image = rasterCtx.createImageData(a.width,a.height)
+  const tint = frame.sourceImage && sourceColors[frame.source].slice(1).match(/../g).map(value=>parseInt(value,16))
   for (let p = 0; p < a.height; p++) {
     for (let b = 0; b < a.width; b++) {
       const k = ((a.height-1-p)*a.width+b)*4
       const v = db(frame.image[p*a.width+b],1.65,36)
       image.data[k] = 11 + 244 * v; image.data[k+1] = 16 + 237 * v
       image.data[k+2] = 24 + 201 * v; image.data[k+3] = 255
+      if (tint) {
+        const strength = .78*db(frame.sourceImage[p*a.width+b],1,40)
+        for (let c=0;c<3;c++) image.data[k+c] = image.data[k+c]*(1-strength)+tint[c]*strength
+      }
     }
   }
   rasterCtx.putImageData(image,0,0)

@@ -1,3 +1,4 @@
+import { terrainTypes } from './terrain.js'
 import { URBAN_DENSITIES } from './environments.js'
 import { parameterInfo } from './learning-info.js'
 import { DEFAULTS, SCENARIOS } from './physics.js'
@@ -77,7 +78,7 @@ export function renderLayout(root) {
         <button id="analysis-mode" aria-pressed="false">${icon('image')} <span>Image Analysis</span></button>
         <button id="space-mode" aria-pressed="false">${icon('radar')} <span>Space Mode</span></button>
       </nav>
-      <div class="header-actions"><span class="engine-state"><i></i><span id="engine-status">INITIALIZING</span></span><button id="help" class="icon-button help" aria-label="About SARcade" title="About SARcade">${icon('help',18)}</button></div>
+      <div class="header-actions"><button id="resume-learning" type="button" hidden>Resume learning</button><span class="engine-state"><i></i><span id="engine-status">INITIALIZING</span></span><button id="help" class="icon-button help" aria-label="About SARcade" title="About SARcade">${icon('help',18)}</button></div>
     </header>
     <main class="workspace">
       <aside class="sidebar" aria-label="Simulation controls">
@@ -86,6 +87,14 @@ export function renderLayout(root) {
         <section id="scenarios-card" class="sidebar-card">
           <h2>${icon('layers')} Scenario</h2>
           <div class="scenario-list">${SCENARIOS.map(s => '<button class="scenario" data-scenario="'+s.id+'" aria-pressed="false"><span class="scenario-symbol">'+icon(s.icon,17)+'</span><span><strong>'+s.name+'</strong><small>'+s.detail+'</small></span>'+icon('chevron',13)+'</button>').join('')}</div>
+          <div id="terrain-options" hidden>
+            <label class="select-label">Terrain type<select id="terrain-type">${terrainTypes.map(type=>`<option>${type}</option>`).join('')}</select></label>
+            <label class="select-label">Height scale (m)<input type="range" id="terrain-height" min="0" max="160" step="2" value="95"></label>
+            <label class="select-label">Slope direction (°)<input type="range" id="terrain-direction" min="0" max="180" step="5" value="0"></label>
+            <label class="select-label">Slope steepness<input type="range" id="terrain-steepness" min=".5" max="2" step=".1" value="1"></label>
+            <label class="select-label">Radar look side<select id="terrain-look-side"><option value="1">From near side</option><option value="-1">From opposite side</option></select></label>
+            <label class="check"><input type="checkbox" id="terrain-dem"> DEM overlay</label>
+          </div>
           <div id="urban-options" class="control-info-row" hidden><label class="select-label">Urban density<select id="urban-density">${URBAN_DENSITIES.map(density=>`<option value="${density}">${density}</option>`).join('')}</select></label>${parameterInfo('urbanDensity','Urban density')}</div>
         </section>
         <section id="radar-card" class="sidebar-card">
@@ -121,16 +130,21 @@ export function renderLayout(root) {
         <div class="splitter horizontal" data-split="rows" role="separator" tabindex="0" aria-label="Resize monitor rows" aria-orientation="horizontal"></div>
         <div class="monitor-row" id="bottom-row">
           ${panel('signal','signal','Received Signal','Complex baseband',
-            '<div class="signal-content"><div class="plot-toolbar"><div class="segmented" aria-label="Signal representation"><button data-tab="range" aria-pressed="true">Range profile</button><button data-tab="iq" aria-pressed="false" title="In-phase and Quadrature components">I/Q</button><button data-tab="doppler" aria-pressed="false">Doppler</button></div><label class="check contribution"><input type="checkbox" id="contributions"> Contributions</label></div><canvas class="plot" id="profile" aria-label="Current received pulse profile"></canvas><div class="plot-heading"><strong>Raw SAR data</strong><span>Pulse × slant range</span></div><canvas class="plot" id="raw" aria-label="Acquired raw radar sample matrix"></canvas></div>',
+            '<div class="signal-content"><div class="orbital-toolbar" id="orbital-signal" hidden aria-label="Orbital signal display"><button data-orbital-signal="range">Range Profile</button><button data-orbital-signal="iq">I/Q</button><button data-orbital-signal="doppler">Doppler</button><button data-orbital-signal="raw">Raw SAR Data</button><button data-orbital-signal="timing">Timing / Ambiguity</button></div><div class="plot-toolbar"><div class="segmented" aria-label="Signal representation"><button data-tab="range" aria-pressed="true">Range profile</button><button data-tab="iq" aria-pressed="false" title="In-phase and Quadrature components">I/Q</button><button data-tab="doppler" aria-pressed="false">Doppler</button></div><label class="check contribution"><input type="checkbox" id="contributions"> Contributions</label></div><canvas class="plot" id="profile" aria-label="Current received pulse profile"></canvas><div class="plot-heading"><strong>Raw SAR data</strong><span>Pulse × slant range</span></div><canvas class="plot" id="raw" aria-label="Acquired raw radar sample matrix"></canvas></div>',
             '<span><i class="dot cyan"></i><span id="signal-key">Total return</span></span><span id="signal-ground" hidden><i class="dot blue"></i> Ground</span><span id="signal-extra" hidden><i class="dot amber"></i><span id="signal-extra-label">Selected target</span></span><span class="muted push" id="signal-count">—</span>')}
           <div class="splitter vertical" data-split="bottom" role="separator" tabindex="0" aria-label="Resize bottom monitors" aria-orientation="vertical"></div>
           ${panel('image','image','SAR Image','Processing',
-            '<div class="image-content"><div class="plot-toolbar"><label class="stage-label" for="stage">Processing stage</label><select id="stage"><option value="focused">Focused image</option><option value="raw">Raw echoes</option><option value="range">Range compression</option><option value="migration">Reference-point migration correction</option></select><span class="image-unit" title="Decibels relative to a fixed display reference">dB</span></div><canvas class="plot" id="image" aria-label="Image reconstructed from the acquired complex echoes"></canvas></div>',
+            '<div class="image-content"><div class="orbital-toolbar" id="orbital-product" hidden aria-label="Orbital image display"><button data-orbital-product="image">SAR Image</button><button data-orbital-product="coverage">Swath Coverage</button><button data-orbital-product="range">Ground Range</button><button data-orbital-product="terrain">Elevation Focus</button><button data-orbital-product="compare" hidden>Airborne vs Orbital</button></div><div class="plot-toolbar"><label class="stage-label" for="stage">Processing stage</label><select id="stage"><option value="focused">Focused image</option><option value="raw">Raw echoes</option><option value="range">Range compression</option><option value="migration">Reference-point migration correction</option></select><select id="ground-focus" aria-label="Focusing model" hidden><option value="flat">Flat-ground focus</option><option value="elevation">Elevation-aware focus</option><option value="geocoded">Geocoded flat image</option></select><span class="image-unit" title="Decibels relative to a fixed display reference">dB</span></div><canvas class="plot" id="image" aria-label="Image reconstructed from the acquired complex echoes"></canvas></div>',
             '<span><i class="dot lime"></i><span id="image-key">Coherent backprojection</span></span><span class="muted push" id="image-size">—</span>')}
         </div>
       </div>
     </main>
     <section class="transport" aria-label="Timeline and playback">
+      <div class="orbital-transport" id="orbital-transport" hidden>
+        <button type="button" id="orbit-play">Play pass</button><button type="button" id="orbit-step">Step pulse</button>
+        <label for="orbit-scrub">Acquired orbital pulses</label><input id="orbit-scrub" type="range" min="0" max="160" value="0">
+        <output id="orbit-count" for="orbit-scrub"></output><button type="button" id="orbit-reset-camera">Reset Earth view</button>
+      </div>
       <div class="transport-controls">
         <button class="icon-button play" id="play" title="Play (Space)" aria-label="Play">${icon('play',19)}</button>
         <button class="icon-button" id="reset" title="Restart at first pulse" aria-label="Restart">${icon('reset',17)}</button>
@@ -151,6 +165,7 @@ export function renderLayout(root) {
       <p><strong>Geometry.</strong> The engine computes slant range <var>R</var>, round-trip delay <span class="formula">2R/c</span>, wrapped phase <span class="formula">−4πR/λ</span>, and Doppler <span class="formula">−(2/λ) dR/dt</span>. Here <var>c</var> is the speed of light and <var>λ</var> is the carrier wavelength.</p>
       <p><strong>Receiver.</strong> In-phase and Quadrature (I/Q) are the real and imaginary parts of the coherently summed signal. The ground and the vehicle both scatter. Noise is added at the receiver.</p>
       <p><strong>Processing.</strong> A matched filter compresses the chirp. Backprojection interpolates each pixel’s changing range and compensates its phase before summing the acquired pulses. The separate migration view aligns one stationary reference point. Moving objects may shift or smear under the stationary-scene assumption.</p>
+      <p><button type="button" id="reset-learning">Reset learning progress</button></p>
       <p><strong>Teaching scale.</strong> The flight uses compressed dimensions and low carrier frequencies to keep the pulse count manageable. The 3D rays illustrate direction and timing qualitatively. The model uses flat terrain, approximate reflectivity, and a simplified beam envelope. The dB scales show relative amplitude.</p>
     </dialog>
   `

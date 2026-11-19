@@ -1,3 +1,5 @@
+import { terrainMarkers } from './terrain-lessons.js'
+import { elevation } from './terrain.js'
 import { SURFACES, urbanBuildings } from './environments.js'
 import { bandwidthStage, conceptSeek, storyboard } from './storyboards.js'
 import { C, DURATION, measure, platform, pulseCount, random, sceneObjects } from './physics.js'
@@ -33,6 +35,7 @@ const content = {
   reflection: ['Echo strength', ['Illuminate both cases with the same pulse', 'Compare returned amplitude', 'Compare echo peaks at the same delay']],
   clutter: ['Distributed ground echoes', ['Illuminate the ground footprint', 'Collect delayed returns from its patches', 'Add the complex echoes at the receiver']],
   noise: ['Signal in receiver noise', ['Receiver fluctuations', 'A weak echo arrives', 'Compare baseline and current detectability']],
+  terrain: ['Height, echo order and reconstruction', ['Read the ground positions', 'Compare the selected marker delays', 'Compare the reconstructions']],
   environment: ['Surfaces, geometry & the image', ['Inspect the terrain patches', 'Trace candidate returns toward the radar', 'Compare the processed surroundings']],
   motion: ['Geometry and measurement history', ['Locate the platform and target', 'Compare actual and reference paths', 'Follow range and Doppler history']],
   vectors: ['Project velocity onto line of sight', ['Draw the line of sight', 'Draw target velocity', 'Project target velocity onto the sight line']],
@@ -453,6 +456,30 @@ function environmentVisual(config,step) {
     }).join('') + label(14,154,'Elevated roofs and blocked ground alter echoes')
 }
 
+function terrainVisual(config,time,step,frame) {
+  if (step === 2 && frame?.comparison?.image) return imageComparison(frame)
+  if (config.scenario !== 'terrain') return environmentVisual(config,step)
+  const markers = terrainMarkers(config,sceneObjects(config),time)
+  const x = y => 21+(y+125)*1.14
+  const y = z => 121-z*.65
+  if (step === 0) return label(10,18,'Ground order · fixed 33 m spacing')
+    + path(series(t=>[x(-125+250*t),y(elevation(config,0,-125+250*t))]),cyan)
+    + markers.map(marker=>dot(x(marker.y),y(marker.z),marker.shadow?muted:amber,3)
+      + label(x(marker.y)-2,151,marker.index+1,marker.shadow?muted:amber)).join('')
+    + label(11,163,'Gray markers have no direct illumination')
+  const low = Math.min(...markers.map(m=>m.range))-6
+  const high = Math.max(...markers.map(m=>m.range))+6
+  const scale = range => 22+274*(range-low)/(high-low)
+  const visible = markers.filter(m=>!m.shadow).sort((a,b)=>a.range-b.range)
+  return label(11,18,'Measured paths · slant-range order')
+    + line([22,128],[296,128])
+    + visible.map((marker,i)=>{
+      const px=scale(marker.range), py=34+(i%3)*24
+      return line([px,py+4],[px,128],cyan)+label(px-3,py,marker.index+1,amber)
+    }).join('')
+    + label(18,148,`${low.toFixed(0)} m`) + label(256,148,`${high.toFixed(0)} m`)
+}
+
 function diagram(kind, config, baseline, time, progress, step, frame) {
   if (['clutter','noise','motion','vectors','focus','environment','quality'].includes(kind)
     && frame?.comparison?.image && step === visualContent(kind)[1].length - 1) return imageComparison(frame)
@@ -470,6 +497,7 @@ function diagram(kind, config, baseline, time, progress, step, frame) {
     case 'motion': case 'matrix': return historyVisual(config,baseline,time,progress,step,kind)
     case 'vectors': return vectorVisual(config,time,step)
     case 'quality': return qualityVisual(config)
+    case 'terrain': return terrainVisual(config,time,step,frame)
     case 'environment': return environmentVisual(config,step)
     case 'truth': case 'focus': return focusVisual(frame,config,time,progress,kind === 'truth')
     case 'phasor': return phasor(155,82,47,measureFirst(config,time).phase + tau*progress,cyan,step === 2)

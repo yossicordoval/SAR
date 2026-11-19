@@ -1,6 +1,7 @@
 import { curriculum } from './curriculum.js'
 
 const terms = {
+  'DEM': 'Digital elevation model. A grid that gives a ground height at each map location.',
   'chirp': 'One radar pulse whose frequency changes during transmission. This simulator sweeps it steadily from low to high.',
   'matched filter': 'A receiver operation that slides a copy of the transmitted pulse across the echoes and measures how well they line up.',
   'phase': 'Where a wave is in its cycle. A full rotation is 360 degrees or 2π radians.',
@@ -25,7 +26,7 @@ const terms = {
   'quadrature': 'The vertical coordinate of the complex wave vector, measured one quarter-cycle away from the in-phase reference.',
   'azimuth': 'The along-track direction, parallel to the platform flight path in this simulator.',
 }
-const lessons = [...curriculum[4].lessons, ...curriculum[0].lessons]
+const lessons = [...curriculum[4].lessons,...curriculum[5].lessons,...curriculum[0].lessons]
 const parameters = new Map(lessons.flatMap(lesson => lesson.controls.map(control => [control.key,lesson])))
 parameters.set('targetX', parameters.get('targetY'))
 

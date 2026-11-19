@@ -1,3 +1,5 @@
+import { PATCH_LAYOUT } from './patch-layout.js'
+import { blockedByTerrain, elevation } from './terrain.js'
 import { blockedByBuilding, terrainStrength, urbanBuildings } from './environments.js'
 export const C = 299792458
 export const DURATION = 8
@@ -12,7 +14,7 @@ export const QUALITY = {
 export const DEFAULTS = {
   altitude: 530, speed: 82, look: 33, frequency: 42, bandwidth: 64, prf: 24,
   noise: 0.024, clutter: true, scenario: 'road', quality: 'interactive',
-  targetX: 12, targetY: 12, targetSpeed: 0, heading: 112, rcs: 1, urbanDensity: 'medium',
+  targetX: 12, targetY: 12, targetSpeed: 0, heading: 112, rcs: 1, urbanDensity: 'medium', terrain:'ridge', terrainHeight:95, terrainDirection:0, terrainSteepness:1,
 }
 
 export const SCENARIOS = [
@@ -20,6 +22,7 @@ export const SCENARIOS = [
   { id: 'rocks', name: 'Rock field', detail: 'Multiple scatterers', icon: 'mountain' },
   { id: 'moving', name: 'Moving vehicle', detail: 'Motion and Doppler', icon: 'move' },
   { id: 'urban', name: 'Urban blocks', detail: 'Roof echoes and radar shadow', icon: 'layers' },
+  { id: 'terrain', name: 'Terrain Analysis', detail: 'Elevation, layover and radar shadow', icon: 'mountain' },
   { id: 'materials', name: 'Surface patches', detail: 'Water, soil and built surfaces', icon: 'mountain' },
   { id: 'water', name: 'Water’s edge', detail: 'Surface contrast', icon: 'waves' },
 ]
@@ -38,6 +41,11 @@ export function reflectivity(x, y, scenario) {
 }
 
 export function sceneObjects(config) {
+  if (config.scenario==='shared-orbital-patch') return PATCH_LAYOUT.map(target=>({...target,id:'point-'+target.id,label:'Reflector '+target.id,z:0}))
+  if (config.scenario === 'terrain') return [-105,-72,-39,-6,27,60,93].map((y,i) => ({
+    id:'point-'+i, label:'Terrain marker '+(i+1), x:0, y, z:elevation(config,0,y)+.2,
+    strength:i === 3 ? 2.1 : 1.35,
+  }))
   if (config.scenario === 'study-point') return [
     { id: 'point-a', label: 'Reflector A', x: config.targetX, y: config.targetY, z: 0, strength: 2.6,
       vx: config.targetSpeed*Math.cos(config.heading*Math.PI/180), vy: config.targetSpeed*Math.sin(config.heading*Math.PI/180) },
@@ -69,7 +77,7 @@ export function sceneObjects(config) {
 }
 export function platform(config, time) {
   return { x: (time - DURATION / 2) * config.speed,
-    y: -config.altitude * Math.tan(config.look * Math.PI / 180), z: config.altitude }
+    y: -config.altitude * Math.tan(config.look * Math.PI / 180) * (config.scenario==='terrain' ? config.lookSide ?? 1 : 1), z: config.altitude }
 }
 export function position(object, time) {
   return { x: object.x + (object.vx || 0) * (time - DURATION / 2),
@@ -98,24 +106,27 @@ function gatherScatterers(config, count, objects, buildings) {
     const x = (rng() * 2 - 1) * AREA.x
     const y = (rng() * 2 - 1) * AREA.y
     const strength = terrainStrength(x,y,config,reflectivity(x,y,config.scenario)) * (0.4 + 0.8 * rng()) * Math.sqrt(560 / count) * 0.38
-    return { x, y, z: 0, strength, bias: rng() * 2 * Math.PI, group: 'ground' }
+    const source = reflectivity(x,y,config.scenario) < .1 || config.scenario === 'materials' && y < 0 && x < 0
+      ? 'water' : config.scenario === 'materials' && y >= 0 && x < -110 ? 'vegetation' : 'terrain'
+    return { x,y,z:elevation(config,x,y),strength,bias:rng()*2*Math.PI,group:'ground',source }
   })
   const details = objects.flatMap(obj => obj.id === 'vehicle'
     ? [[0, 0, 1], [-5, -2.2, 0.56], [5, 2.1, 0.46], [3, -2, 0.63], [-3, 2, 0.52]].map(([dx, dy, gain], index) =>
-      ({ ...obj, x: obj.x + dx, y: obj.y + dy, strength: obj.strength * gain, bias: index * 0.44, group: obj.id }))
-    : [{ ...obj, bias: 0.4, group: obj.id }])
+      ({ ...obj, x: obj.x + dx, y: obj.y + dy, strength: obj.strength * gain, bias: index * 0.44, group: obj.id,source:'vehicle' }))
+    : [{ ...obj, bias: 0.4, group: obj.id,source:'reflector' }])
   const roofs = buildings.flatMap(({x,y,hx,hy,height},i) => [
-    {x,y,z:height,strength:1.15,bias:i*.5,group:'ground'},
-    {x:x-hx*.7,y:y-hy*.65,z:height,strength:.65,bias:i*.4,group:'ground'},
-    {x,y:y-hy-.1,z:.1,strength:1.65,bias:i*.35,group:'ground'},
+    {x,y,z:height,strength:1.15,bias:i*.5,group:'ground',source:'roof'},
+    {x:x-hx*.7,y:y-hy*.65,z:height,strength:.65,bias:i*.4,group:'ground',source:'roof'},
+    {x,y:y-hy-.1,z:height*.54,strength:.49,bias:i*.82,group:'ground',source:'wall'},
+    {x,y:y-hy-.1,z:.1,strength:1.65,bias:i*.35,group:'ground',source:'corner'},
   ])
   return [...(config.clutter ? [...ground,...roofs] : []), ...details]
 }
 
-function chirp(config, dr) {
+export function createChirp(bandwidth, dr) {
   const dt = 2 * dr / C
   const half = Math.floor(PULSE_DURATION / (2 * dt))
-  const slope = config.bandwidth * 1e6 / PULSE_DURATION
+  const slope = bandwidth * 1e6 / PULSE_DURATION
   return { half, slope, dt, samples: Array.from({ length: 2 * half + 1 }, (_, k) => {
     const m = k - half
     const phase = Math.PI * slope * (m * dt) ** 2
@@ -124,7 +135,7 @@ function chirp(config, dr) {
   }) }
 }
 
-function compress(i, q, bins, wave, outI, outQ, offset) {
+export function compressPulse(i, q, bins, wave, outI, outQ, offset) {
   const norm = wave.samples.reduce((sum, sample) => sum + sample[2], 0)
   for (let b = 0; b < bins; b++) {
     let re = 0, im = 0
@@ -150,12 +161,12 @@ export function createAcquisition(config) {
   const minY = Math.min(...objects.map(o => o.y - Math.abs(o.vy || 0) * DURATION / 2), -AREA.y) - 12
   const maxY = Math.max(...objects.map(o => o.y + Math.abs(o.vy || 0) * DURATION / 2), AREA.y) + 12
   const maxX = Math.max(...objects.map(o => Math.abs(o.x) + Math.abs(o.vx || 0) * DURATION / 2), AREA.x) + 12
-  const minRange = Math.hypot(config.altitude - Math.max(8,...buildings.map(block => block.height)), Math.max(0, minY - satY)) - 42
-  const maxRange = Math.hypot(config.altitude, maxY - satY, maxX + config.speed * DURATION / 2) + 42
+  const minRange = Math.hypot(config.altitude - Math.max(8,config.scenario === 'terrain' ? config.terrainHeight ?? 95 : 0,...buildings.map(block => block.height)), Math.max(0,minY-satY,satY-maxY)) - 42
+  const maxRange = Math.hypot(config.altitude, Math.max(Math.abs(minY-satY),Math.abs(maxY-satY)), maxX + config.speed * DURATION / 2) + 42
   const minimumBins = Math.ceil((maxRange - minRange) * 2 * config.bandwidth * 1e6 / C) + 1
   const bins = Math.max(desiredBins, minimumBins)
   const dr = (maxRange - minRange) / (bins - 1)
-  const wave = chirp(config, dr)
+  const wave = createChirp(config.bandwidth,dr)
   const buffer = () => new Float32Array(bins * count)
   const i = buffer(), q = buffer(), rangeI = buffer(), rangeQ = buffer()
   const tracks = Object.fromEntries(objects.map(o => [o.id, []]))
@@ -170,7 +181,7 @@ export function createAcquisition(config) {
     const offset = p * bins
     i.set(re, offset)
     q.set(im, offset)
-    compress(re, im, bins, wave, rangeI, rangeQ, offset)
+    compressPulse(re, im, bins, wave, rangeI, rangeQ, offset)
     for (const obj of objects) tracks[obj.id].push(measure(config, obj, pulseTime(config, p)))
   }
   return state
@@ -183,26 +194,41 @@ function synthesizePulse(state, pulse, filter) {
   const sat = platform(config, t)
   const refRange = config.altitude / Math.cos(config.look * Math.PI / 180)
   const phaseFactor = -4 * Math.PI * config.frequency * 1e6 / C
-  const support = PULSE_DURATION / (2 * wave.dt)
   for (const s of scatterers) {
-    if (filter && s.group !== filter) continue
+    if (filter && s.group !== filter && s.source !== filter) continue
     const dx = s.x + (s.vx || 0) * (t - DURATION / 2) - sat.x
     const groundY = s.y + (s.vy || 0) * (t - DURATION / 2)
     const dy = groundY - sat.y
     if (buildings.length && blockedByBuilding(sat,{x:sat.x+dx,y:groundY,z:s.z},buildings)) continue
+    if (config.scenario==='terrain' && blockedByTerrain(config,sat,{x:sat.x+dx,y:groundY,z:s.z})) continue
     const r = Math.sqrt(dx * dx + dy * dy + (s.z - sat.z) ** 2)
     const cell = (r - minRange) / dr
     const beam = 0.5 ** ((dx / FOOTPRINT.x) ** 2 + (groundY / FOOTPRINT.y) ** 2)
     const amplitude = s.strength * (refRange / r) ** 2 * beam
     const phase = phaseFactor * r + s.bias
-    for (let j = Math.max(0, Math.ceil(cell - support)); j <= Math.min(bins - 1, Math.floor(cell + support)); j++) {
-      const delta = (j - cell) * wave.dt
-      const angle = phase + Math.PI * wave.slope * delta ** 2
-      re[j] += amplitude * Math.cos(angle)
-      im[j] += amplitude * Math.sin(angle)
-    }
+    addChirpEcho(re,im,wave,cell,amplitude,phase)
   }
   return [re, im]
+}
+
+export function addChirpEcho(re,im,wave,cell,amplitude,phase) {
+  const support = PULSE_DURATION/(2*wave.dt)
+  for (let j=Math.max(0,Math.ceil(cell-support)); j<=Math.min(re.length-1,Math.floor(cell+support)); j++) {
+    const delta = (j-cell)*wave.dt
+    const angle = phase+Math.PI*wave.slope*delta**2
+    re[j] += amplitude*Math.cos(angle)
+    im[j] += amplitude*Math.sin(angle)
+  }
+}
+
+export function sourceAcquisition(state,source,first,last) {
+  const { bins,wave,rangeI,rangeQ } = state
+  const i = new Float32Array(rangeI.length), q = new Float32Array(rangeQ.length)
+  for (let pulse=first; pulse<=last; pulse++) {
+    const [re,im] = synthesizePulse(state,pulse,source)
+    compressPulse(re,im,bins,wave,i,q,pulse*bins)
+  }
+  return {...state,rangeI:i,rangeQ:q}
 }
 
 export function components(state, pulse, selected) {

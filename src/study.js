@@ -1,3 +1,4 @@
+import { sourceNames } from './terrain.js'
 import { explainTerms, parameterInfo } from './learning-info.js'
 import { visualMarkup } from './study-visual.js'
 import { answerFeedback, canAdvance, controlBaseline, currentLesson, lessonStatus, STEPS } from './study-state.js'
@@ -61,6 +62,11 @@ export function renderStudy(card, state) {
       ${state.complete ? `<p>${completed} of ${state.lessons.length} lessons completed. Use Choose Lesson to review or resume an experiment.</p>` : `
         ${stepMarkup[step]()}
         ${step <= 1 && lesson.visual ? visualMarkup(lesson.visual) : ''}
+        ${lesson.stage==='focused' && (!lesson.evidence || step>=2) && ['urban','terrain','materials','water'].includes(lesson.baseline.scenario) && !lesson.controls.some(c=>c.key==='studySource')
+          ? `<label class="study-choice">Show simulated source type
+              <select data-source-overlay><option value="off">Off</option>${Object.entries(sourceNames).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select>
+            </label>` : ''}
+        ${['urban','terrain','materials','water'].includes(lesson.baseline.scenario) ? '<p class="study-scale">Source colors show educational ground truth from the simulator. Assigning a source in real SAR requires independent evidence.</p>' : ''}
         <div class="study-measurements">
           <table aria-label="Live experiment measurements"><thead><tr><th scope="col">Measurement</th><th scope="col">Baseline</th><th scope="col">Current</th></tr></thead>
             <tbody>${lesson.metrics.map(metric => `<tr><th scope="row">${metric.label}</th><td>—</td><td>—</td></tr>`).join('')}</tbody></table>

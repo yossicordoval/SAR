@@ -1,3 +1,4 @@
+import { blockedByTerrain, elevation, sourceColors, surfaceNormal } from './terrain.js'
 import { terrainStrength, urbanBuildings } from './environments.js'
 import { AREA, FOOTPRINT, platform, random, reflectivity, road, sceneObjects } from './physics.js'
 
@@ -148,7 +149,10 @@ export function createScene(canvas, geometry, onSelect) {
       poly([p(-xbound,-ybound,-10),p(xbound,-ybound,-10),p(xbound,-ybound),p(-xbound,-ybound)], '#102c34', '#33515a')
       poly([p(xbound,-ybound,-10),p(xbound,ybound,-10),p(xbound,ybound),p(xbound,-ybound)], '#112d32', '#33515a')
     }
-    const step = geometry ? 34 : 40
+    const raised = config.scenario === 'terrain'
+    const sensor = platform(config,frame.time)
+    const surface = (x,y,lift=0) => p(x,y,elevation(config,x,y)+lift)
+    const step = raised ? 16 : geometry ? 34 : 40
     const terrain = []
     for (let y = -ybound; y < ybound; y += step) {
       for (let x = -xbound; x < xbound; x += step) {
@@ -156,19 +160,24 @@ export function createScene(canvas, geometry, onSelect) {
         const s = terrainStrength(x,y,config,reflectivity(x+step*.51,y+step*.51,config.scenario))
         const f = Math.sin(x * 0.48 + y * 0.32)
         const land = geometry ? [29 + s * 18, 52 + s * 19, 54 + s * 13] : [111 + s * 32, 116 + s * 26, 78 + s * 27]
-        const a = p(x,y), b = p(x2,y), c = p(x2,y2), d = p(x,y2)
+        const a = surface(x,y), b = surface(x2,y), c = surface(x2,y2), d = surface(x,y2)
         const green = (color, n) => 'rgb(' + color.map(k => Math.round(k + n)).join(',') + ')'
+        const mx=(x+x2)/2, my=(y+y2)/2
+        if (raised && geometry && blockedByTerrain(config,sensor,{x:mx,y:my,z:elevation(config,mx,my)})) {
+          terrain.push([[a,b,c],'#171f36'],[[a,c,d],'#1a2340'])
+          continue
+        }
         terrain.push([[a,b,c], s < 0.1 ? '#345e70' : green(land, f * 4)], [[a,c,d], s < 0.1 ? '#386677' : green(land, f * 2 - 3)])
       }
     }
     terrain.sort((a, b) => project(b[0][0])[2] - project(a[0][0])[2])
-    for (const [pts, color] of terrain) poly(pts, color, color, 0.85)
-    if (geometry) {
+    for (const [pts, color] of terrain) poly(pts,color,raised && options.dem ? '#7ecdd92e' : color,.85)
+    if (geometry && !raised) {
       for (let x = -200; x <= 200; x += 40) line([p(x,-170,.2),p(x,170,.2)], '#43676655', 0.6)
       for (let y = -160; y <= 160; y += 40) line([p(-220,y,.2),p(220,y,.2)], '#43676655', 0.6)
     }
     const strips = [[-11, 11, geometry ? '#6b6250' : '#b9a47c'], [-8, -6.6, '#dac29a77'], [5, 6.6, '#d1b99077']]
-    for (const [l, r, color] of strips) {
+    for (const [l, r, color] of raised ? [] : strips) {
       const sides = [[], []]
       for (let x = -xbound; x <= xbound; x += 5) {
         sides[0].push(p(x,road(x) + l,0.7)); sides[1].unshift(p(x,road(x) + r,0.7))
@@ -193,7 +202,7 @@ export function createScene(canvas, geometry, onSelect) {
         add(roof,height>=50 ? '#82a1b2' : '#708281','#a9bbc1')
       }
     }
-    for (const [x, y, variant, scale, angle] of detail) {
+    for (const [x, y, variant, scale, angle] of raised ? [] : detail) {
       if (config.scenario === 'urban' && (variant < .88 || urbanBuildings(config.urbanDensity).some(b => Math.abs(x-b.x) < b.hx+9 && Math.abs(y-b.y) < b.hy+9))) continue
       if (Math.abs(y - road(x)) < 18 || Math.abs(x) > xbound - 8 || Math.abs(y) > ybound - 8 ||
         reflectivity(x,y,config.scenario) < 0.1 || (geometry && variant < 0.45)) continue
@@ -204,8 +213,8 @@ export function createScene(canvas, geometry, onSelect) {
     if (geometry && options.footprint) {
       const sat = platform(config, frame.time)
       const x = sat.x
-      poly(ring(x, 0, 1.4, FOOTPRINT.x, FOOTPRINT.y), '#31d1b629', '#3ee7c79a', 1)
-      for (const factor of [0.78, 0.56]) poly(ring(x,0,1.5,FOOTPRINT.x*factor,FOOTPRINT.y*factor), null, '#53e5bc52', 0.7)
+      poly(ring(x,0,1.4,FOOTPRINT.x,FOOTPRINT.y).map(([u,v,z])=>surface(u,v,z)), '#31d1b629', '#3ee7c79a', 1)
+      for (const factor of [0.78, 0.56]) poly(ring(x,0,1.5,FOOTPRINT.x*factor,FOOTPRINT.y*factor).map(([u,v,z])=>surface(u,v,z)), null, '#53e5bc52', 0.7)
     }
     hits = []
     for (const obj of sceneObjects(config)) {
@@ -213,7 +222,7 @@ export function createScene(canvas, geometry, onSelect) {
       const isSelected = obj.id === frame.selected
       if (obj.id.startsWith('point-')) {
         const color = obj.id === 'point-a' ? '#a5f6be' : '#f4ce80'
-        const point = project(p(spot.x, spot.y, 1))
+        const point = project(p(spot.x,spot.y,spot.z+1))
         const [x,y] = point
         outline(ctx, [[x,y-5],[x+5,y],[x,y+5],[x-5,y]], color, isSelected ? '#e9ffff' : '#192839', 1)
         hits.push({ point, obj, spot })
@@ -228,7 +237,12 @@ export function createScene(canvas, geometry, onSelect) {
       const sat = platform(config, frame.time)
       const satPoint = p(sat.x * 0.56, sat.y * 0.50, 78 + sat.z * 0.23)
       const selected = frame.tracks[frame.selected][frame.pulse]
-      const target = p(selected.x, selected.y, 8)
+      const target = p(selected.x,selected.y,raised ? selected.z : 8)
+      const shadow = raised && blockedByTerrain(config,sat,selected)
+      if (raised && options.dem) {
+        const normal = surfaceNormal(config,selected.x,selected.y)
+        line([target,target.map((value,i)=>value+normal[i]*47)],'#faf2b3',1.7)
+      }
       const lerp = (a, b, u) => a.map((v, i) => v * (1 - u) + b[i] * u)
       if (options.footprint) {
         const x = sat.x
@@ -238,7 +252,7 @@ export function createScene(canvas, geometry, onSelect) {
       ctx.setLineDash([5, 6])
       const left = p(-225,satPoint[1],satPoint[2]), right = p(225,satPoint[1],satPoint[2])
       line([left,right], '#89a5c794', 1)
-      if (options.los) line([satPoint,target], '#6ddec5', 1)
+      if (options.los) line([satPoint,target],shadow?'#ff9a98':'#6ddec5',1)
       ctx.setLineDash([])
       if (options.range) {
         const [x, y] = project(lerp(satPoint, target, 0.55))
@@ -257,7 +271,7 @@ export function createScene(canvas, geometry, onSelect) {
           line(arc, '#49efd4c0', 1.5)
         }
       }
-      if (options.echo) {
+      if (options.echo && !shadow) {
         const a = project(target), b = project(satPoint)
         const bend = [(a[0] + b[0]) / 2 + 44, (a[1] + b[1]) / 2 - 13]
         ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(...bend,b[0],b[1])
@@ -288,6 +302,11 @@ export function createScene(canvas, geometry, onSelect) {
     }
     faces.sort((a,b) => b.depth - a.depth)
     for (const face of faces) outline(ctx,face.projected,face.color,face.edge,0.7)
+    for (const spot of frame.sourcePoints ?? []) {
+      const [x,y] = project(p(spot.x,spot.y,spot.z+2))
+      ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2)
+      ctx.fillStyle = sourceColors[spot.source]; ctx.fill()
+    }
     if (satelliteLabel) {
       const [x, y] = satelliteLabel
       label(ctx,clamp(x - 48,8,w - 108),Math.max(8,y - 38),'SAR platform',null,'#c7def9')
@@ -312,6 +331,7 @@ export function createScene(canvas, geometry, onSelect) {
   }
 
   canvas.addEventListener('pointerdown', e => {
+    if (canvas.closest('.space-mode')) return
     drag = { x: e.clientX, y: e.clientY, ...view, pointerX: e.clientX, pointerY: e.clientY, pan: e.shiftKey || e.button !== 0 }
     moved = false
     canvas.setPointerCapture(e.pointerId)
@@ -341,7 +361,7 @@ export function createScene(canvas, geometry, onSelect) {
   })
   canvas.addEventListener('pointercancel', () => { drag = null })
   canvas.addEventListener('contextmenu', e => e.preventDefault())
-  canvas.addEventListener('wheel', e => { e.preventDefault(); view.distance = clamp(view.distance * Math.exp(e.deltaY * 0.001),120,1750); draw() }, { passive: false })
+  canvas.addEventListener('wheel', e => { if (canvas.closest('.space-mode')) return; e.preventDefault(); view.distance = clamp(view.distance * Math.exp(e.deltaY * 0.001),120,1750); draw() }, { passive: false })
   return {
     render(next, params, visibility) { frame = next; config = params; options = visibility; draw() },
     draw,

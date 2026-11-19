@@ -1,3 +1,4 @@
+import { PROGRESS_KEY, readProgress, restoreStudy, snapshotStudy, writeProgress } from './learning-progress.js'
 import './style.css'
 import { createSpace } from './space.js'
 import { installLearningInfo } from './learning-info.js'
@@ -20,10 +21,18 @@ const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'modu
 const view = { mode: 'sandbox', tab: 'range', stage: 'focused', instant: false, selected: 'vehicle',
   playing: false, rate: 1, pulse: Math.round((pulseCount(DEFAULTS) - 1) * 0.61), maximum: null }
 let config = { ...DEFAULTS }, sandbox, frame, acquisition, revision = 1, activeRevision = 0
-let study = createStudy(curriculum), updateVisualization, lastStudy = '0A-1', lastAnalysis = '2-1'
+const storage = (() => {
+  try { return window.localStorage } catch { return undefined }
+})()
+const progress = readProgress(storage)
+let study = restoreStudy(curriculum,progress.ground), updateVisualization
+let lastStudy = progress.lastStudy ?? '0A-1', lastAnalysis = progress.lastAnalysis ?? '2-1'
+let resumeMode = ['study','analysis','space'].includes(progress.resumeMode) ? progress.resumeMode : null
 const studyCard = $('study-card')
 const isGuided = () => view.mode === 'study' || view.mode === 'analysis'
-const space = createSpace($('space-card'),$('space-intro'))
+const space = createSpace($('space-card'),$('space-intro'),progress.orbital,orbital => {
+  writeProgress(storage,{orbital})
+})
 const studyContext = () => isGuided() ? currentLesson(study) : null
 let request = 0, sent = 0, scheduled = false, pending = false, startTime = 0, startPulse = 0
 const optical = createScene($('optical'),false,selectObject)
@@ -52,6 +61,11 @@ function updateControls() {
   $('frequency').value = config.frequency
   $('quality').value = config.quality
   $('clutter').checked = config.clutter
+  $('terrain-options').hidden = config.scenario !== 'terrain'
+  $('ground-focus').hidden = view.mode !== 'sandbox' || !['urban','terrain'].includes(config.scenario)
+  for (const [id,key] of [['terrain-type','terrain'],['terrain-height','terrainHeight'],['terrain-direction','terrainDirection'],['terrain-steepness','terrainSteepness'],['terrain-look-side','lookSide']]) {
+    $(id).value = config[key] ?? 1
+  }
   $('urban-options').hidden = config.scenario !== 'urban'
   $('urban-density').value = config.urbanDensity
   all('[data-scenario]').forEach(el => el.setAttribute('aria-pressed',el.dataset.scenario === config.scenario))
@@ -77,7 +91,7 @@ function send() {
     compareImage: lesson.compareImage, apertureMetrics: lesson.id === '3', motionExample: lesson.visual === 'doppler',
     instant: lesson.instant }
   worker.postMessage({ revision, request: sent, config: newAcquisition ? config : null, pulse: view.pulse,
-    instant: view.instant, first: view.windowStart, focusModel:view.focusModel, trajectoryDrift:view.trajectoryDrift, stage: view.stage, selected: view.selected, study: comparison })
+    instant: view.instant, first: view.windowStart, focusModel:view.focusModel, trajectoryDrift:view.trajectoryDrift, source:view.studySource, stage: view.stage, selected: view.selected, study: comparison })
   activeRevision = revision
 }
 
@@ -95,7 +109,11 @@ worker.onmessage = ({ data }) => {
     draw()
     const lesson = studyContext()?.lesson
     if (lesson && frame.studyId === lesson.id) {
-      study = transition(study, { type: 'observed' })
+      const next = transition(study, { type: 'observed' })
+      if (next !== study) {
+        study = next
+        saveGroundProgress()
+      }
       updateStudyMeasurements(studyCard, lesson, frame)
       updateVisualization?.(frame)
       updateStudyNavigation(studyCard, currentLesson(study))
@@ -146,7 +164,8 @@ function draw() {
   const phase = Math.atan2(Math.sin(track.phase),Math.cos(track.phase))
   $('obs-phase').textContent = (phase * 180 / Math.PI).toFixed(0) + '°'
   $('signal-count').textContent = (pulse - first + 1) + (pulse === first ? ' pulse' : ' pulses') + ' acquired'
-  $('image-key').textContent = stages[frame.stage]
+  $('image-key').textContent = frame.stage !== 'focused' ? stages[frame.stage] :
+    ({elevation:'Elevation-aware backprojection',geocoded:'Flat image geocoded at mid-pass',flat:'Flat-ground backprojection'}[frame.focusModel] ?? stages.focused)
   $('image-size').textContent = frame.stage === 'focused'
     ? a.width + ' × ' + a.height + ' pixels'
     : a.bins + ' range bins'
@@ -157,7 +176,7 @@ function draw() {
   $('monitors').dataset.pulse = pulse
   $('monitors').dataset.acquired = pulse - first + 1
   $('monitors').dataset.revision = frame.revision
-  const visibility = lesson ? { ...options, labels: true, los: true, range: true } : options
+  const visibility = lesson ? { ...options, labels:true,los:true,range:true,dem:frame.config.scenario==='terrain' } : options
   optical.render(frame,frame.config,visibility)
   geometry.render(frame,frame.config,visibility)
   drawPlots()
@@ -188,7 +207,7 @@ function editConfig(update, redrawControls = true) {
   const oldCount = pulseCount(config)
   const fraction = view.pulse / (oldCount - 1)
   config = { ...config, ...update }
-  if (!sceneObjects(config).some(obj => obj.id === view.selected)) view.selected = 'vehicle'
+  if (!sceneObjects(config).some(obj => obj.id === view.selected)) view.selected = sceneObjects(config)[0].id
   view.pulse = Math.round(fraction * (pulseCount(config) - 1))
   if (view.playing) anchorPlayback()
   if (redrawControls) updateControls()
@@ -240,10 +259,22 @@ function updateStudyTarget() {
   })
 }
 
+function saveGroundProgress() {
+  if (view.mode === 'study') lastStudy = currentLesson(study).lesson.id
+  if (view.mode === 'analysis') lastAnalysis = currentLesson(study).lesson.id
+  writeProgress(storage,{ground:snapshotStudy(study),lastStudy,lastAnalysis,resumeMode})
+}
+
+function showResume() {
+  $('resume-learning').hidden = view.mode !== 'sandbox' || !resumeMode
+}
+
 function showStudy(focusHeading = false, resetSelection = false) {
+  saveGroundProgress()
   const current = currentLesson(study)
   const { lesson } = current
   $('app').classList.toggle('evidence',Boolean(blindEvidence()))
+  $('ground-focus').hidden = true
   const sameLesson = $('monitors').dataset.lesson === lesson.id
   if (view.maximum && !sameLesson) maximize(view.maximum)
   $('monitors').dataset.lesson = lesson.id
@@ -255,6 +286,7 @@ function showStudy(focusHeading = false, resetSelection = false) {
     control.value = Math.round(time / DURATION * (pulseCount(config)-1))
     control.dispatchEvent(new Event('input',{ bubbles: true }))
   })
+  if (!sameLesson || resetSelection) view.studySource = 'off'
   if (!sameLesson || resetSelection) view.selected = lesson.focus ?? sceneObjects(lesson.baseline)[0].id
   updateStudyTarget()
   view.stage = lesson.stage
@@ -273,7 +305,11 @@ function applyStudyExperiment(current) {
   if (Object.entries(experiment).some(([key, value]) => config[key] !== value)) editConfig(experiment)
   const stage = lesson.controls.find(control => control.key === 'stage')
   const focusControl = lesson.controls.find(control => control.key === 'focusModel')
-  view.focusModel = focusControl?.values[edits.focusModel]
+  view.focusModel = focusControl?.values[edits.focusModel] ?? lesson.focusModel
+  const sourceControl = lesson.controls.find(control=>control.key==='studySource')
+  if (sourceControl) view.studySource = sourceControl.values[edits.studySource] ?? 'off'
+  const sourcePicker=studyCard.querySelector('[data-source-overlay]')
+  if(sourcePicker) sourcePicker.value=view.studySource ?? 'off'
   view.trajectoryDrift = edits.trajectoryDrift
   view.stage = stage?.values[edits.stage] ?? lesson.stage
   $('stage').value = view.stage
@@ -288,9 +324,12 @@ function applyStudyExperiment(current) {
 }
 
 function setSpaceLabels(enabled) {
-  const names = enabled ? ['Orbital Ground Track','Spherical Radar Geometry','Orbital Signal','Swath Coverage']
+  const names = enabled ? ['Orbital / Earth View','Spaceborne Radar Geometry','Orbital SAR Data','Spaceborne SAR Image / Coverage']
     : ['Optical View','Radar Geometry','Received Signal','SAR Image']
   ;['optical','geometry','signal','image'].forEach((id,i) => { $('title-'+id).textContent = names[i] })
+  $('orbital-transport').hidden = !enabled
+  $('orbital-signal').hidden = !enabled
+  $('orbital-product').hidden = !enabled
   if (enabled) {
     $('image').onclick = null
     if (view.maximum) maximize(view.maximum)
@@ -303,11 +342,16 @@ function setMode(mode) {
   setPlaying(false)
   if (prior === 'sandbox') {
     sandbox = { config, tab: view.tab, stage: view.stage, instant: view.instant, pulse: view.pulse,
-      selected: view.selected, contributions: $('contributions').checked }
+      selected:view.selected, contributions:$('contributions').checked, focusModel:view.focusModel }
   } else if (prior === 'space') space.leave()
   else if (prior === 'study') lastStudy = currentLesson(study).lesson.id
   else lastAnalysis = currentLesson(study).lesson.id
   view.mode = mode
+  if (mode !== 'sandbox') {
+    resumeMode = mode
+    writeProgress(storage,{resumeMode})
+  }
+  showResume()
   const studying = isGuided(), orbital = mode === 'space'
   const app = $('app')
   app.classList.toggle('studying',studying || orbital)
@@ -319,7 +363,7 @@ function setMode(mode) {
   $('radar-card').hidden = mode !== 'sandbox'
   $('scenarios-card').hidden = mode !== 'sandbox'
   document.querySelector('.view-card').hidden = mode !== 'sandbox'
-  all('[data-tab], #stage, #contributions, .transport button, .transport input, .transport select')
+  all('[data-tab], #stage, #contributions, .transport > :not(.orbital-transport) button, .transport > :not(.orbital-transport) input, .transport > :not(.orbital-transport) select')
     .forEach(control => { control.disabled = mode !== 'sandbox' })
   setSpaceLabels(orbital)
   if (orbital) {
@@ -332,7 +376,9 @@ function setMode(mode) {
     study = transition(study,{type:'select',value:mode==='analysis'?lastAnalysis:lastStudy})
     showStudy()
   } else {
-    view.windowStart = view.focusModel = view.trajectoryDrift = undefined
+    view.windowStart = view.trajectoryDrift = view.studySource = undefined
+    view.focusModel = sandbox.focusModel
+    $('ground-focus').value = view.focusModel ?? 'flat'
     delete $('monitors').dataset.lesson
     all('.study-highlight').forEach(panel => panel.classList.remove('study-highlight'))
     $('timeline-label').textContent = 'FLIGHT TIMELINE'
@@ -370,9 +416,15 @@ studyCard.onclick = e => {
   showStudy(true, ['reset', 'repeat'].includes(button.dataset.studyAction))
 }
 studyCard.onchange = e => {
+  if (e.target.matches('[data-source-overlay]')) {
+    view.studySource = e.target.value
+    requestFrame()
+    return
+  }
   const action = e.target.dataset.studyAction
   if (!action || !isGuided()) return
   study = transition(study, { type: action, value: action === 'reference' ? e.target.checked : Number(e.target.value) })
+  saveGroundProgress()
   updateStudyNavigation(studyCard,currentLesson(study),frame?.revision !== revision)
   if (action === 'reference') drawPlots()
 }
@@ -382,6 +434,7 @@ studyCard.oninput = e => {
   const next = transition(study, { type: 'edit', key, value: Number(e.target.value) })
   if (next === study) return
   study = next
+  saveGroundProgress()
   applyStudyExperiment(currentLesson(study))
   if (e.target.type === 'range') {
     $('study-value-' + key).textContent = e.target.value + (e.target.dataset.unit ? ' ' + e.target.dataset.unit : '')
@@ -394,7 +447,9 @@ function sandboxOnly(action) {
 }
 all('[data-scenario]').forEach(el => el.onclick = sandboxOnly(() => {
   const scenario = el.dataset.scenario
-  view.selected = 'vehicle'
+  view.selected = sceneObjects({...config,scenario})[0].id
+  view.focusModel = undefined
+  $('ground-focus').value = 'flat'
   editConfig({ scenario, targetX: DEFAULTS.targetX, targetY: DEFAULTS.targetY,
     targetSpeed: scenario === 'moving' ? 15 : 0, heading: DEFAULTS.heading, rcs: DEFAULTS.rcs })
 }))
@@ -402,6 +457,11 @@ all('.slider-label input').forEach(el => el.oninput = sandboxOnly(() => editConf
 $('frequency').onchange = sandboxOnly(e => editConfig({ frequency: +e.target.value }))
 $('quality').onchange = sandboxOnly(e => editConfig({ quality: e.target.value }))
 $('clutter').onchange = sandboxOnly(e => editConfig({ clutter: e.target.checked }))
+for (const [id,key,numeric] of [['terrain-type','terrain',false],['terrain-height','terrainHeight',true],['terrain-direction','terrainDirection',true],['terrain-steepness','terrainSteepness',true],['terrain-look-side','lookSide',true]]) {
+  $(id).oninput = sandboxOnly(e=>editConfig({[key]:numeric ? +e.target.value : e.target.value},false))
+}
+$('terrain-dem').onchange = sandboxOnly(e=>{ options.dem = e.target.checked; draw() })
+$('ground-focus').onchange = sandboxOnly(e=>{ view.focusModel = e.target.value; requestFrame() })
 $('urban-density').onchange = sandboxOnly(e => editConfig({ urbanDensity:e.target.value }))
 all('[data-option]').forEach(el => el.onchange = () => { options[el.dataset.option] = el.checked; draw() })
 all('[data-tab]').forEach(el => el.onclick = () => selectTab(el.dataset.tab))
@@ -417,6 +477,23 @@ $('flight').onclick = () => setInstant(false)
 $('instant').onclick = () => setInstant(true)
 $('rate').onchange = e => { view.rate = +e.target.value; anchorPlayback() }
 $('help').onclick = () => $('about').showModal()
+$('resume-learning').onclick = () => { if (resumeMode) setMode(resumeMode) }
+$('reset-learning').onclick = () => {
+  if (!confirm('Reset all saved SARcade lesson progress?')) return
+  if (view.mode !== 'sandbox') setMode('sandbox')
+  try {
+    localStorage.removeItem(PROGRESS_KEY)
+    localStorage.removeItem('sarcade-launch-seen')
+  } catch { /* Learning progress still resets for this session. */ }
+  study = createStudy(curriculum)
+  space.resetProgress()
+  lastStudy = '0A-1'
+  lastAnalysis = '2-1'
+  resumeMode = null
+  $('about').close()
+  showResume()
+}
+showResume()
 $('close-help').onclick = () => $('about').close()
 
 function maximize(id) {

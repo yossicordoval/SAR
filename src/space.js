@@ -1,10 +1,12 @@
+import { restoreStudy, snapshotStudy } from './learning-progress.js'
 import { C } from './physics.js'
-import { orbitalConfig, orbitalControls, orbitalDefaults, orbitalDelay, orbitalObservation, radarBands } from './space-model.js'
+import { orbitalConfig, orbitalControls, orbitalDefaults, orbitalObservation, orbitalPresets } from './space-model.js'
 import { spaceCurriculum } from './space-lessons.js'
 import { answerFeedback, canAdvance, controlBaseline, createStudy, currentLesson, STEPS, studyConfig, transition } from './study-state.js'
-import { urbanBuildings } from './environments.js'
+import { paintSpace } from './space-visual.js'
+import { orbitChapters, overviewRows, storyMarkup, termNames } from './orbital-story.js'
+import { orbitalVocabulary } from './space-lessons.js'
 
-const canvasIds = ['optical','geometry','profile','raw','image']
 const launchStages = [
   'Rocket on the pad','Ignition','Ascent','Sky darkens','Earth’s limb comes into view',
   'Payload separates','Satellite deployed','Solar panels unfold','Radar antenna active','Side-looking observation begins',
@@ -35,6 +37,20 @@ function controlMarkup(control,value,guided) {
     ${help(control)}</div>`
 }
 
+function experimentComparison(before,after) {
+  const a=orbitalObservation(before), b=orbitalObservation(after)
+  const fields=[
+    ['Central receive delay',o=>round(o.look?.range*2000/C,3)+' ms'],
+    ['Swath receive-window width',o=>o.delaySpread===null?'—':round(o.delaySpread*1000,3)+' ms'],
+    ['Ideal range detail',o=>round(o.rangeResolution,2)+' m'],
+    ['Residual target Doppler',o=>round(o.radialDoppler)+' Hz'],
+    ['One-way path-error phase magnitude',o=>round(o.phaseError,2)+' rad'],
+  ]
+  return `<dl class="orbit-compare-readout">${fields.map(([label,read])=>`<dt>${label}</dt><dd>${read(a)} → ${read(b)}</dd>`).join('')}
+    <dt>Reconstruction surface</dt><dd>${before.focus} → ${after.focus}</dd></dl>
+    <p>Use the left signal tabs to read the implications of the experiment. The right image tabs compare the reconstruction, local coverage and elevation model.</p>`
+}
+
 function launchMarkup(progress) {
   const stage = launchStage(progress), ground = stage < 4, payload = stage >= 5
   const x = ground ? 233 : 150+148*progress, y = ground ? 151-progress*245 : 84-progress*28
@@ -50,15 +66,22 @@ function launchMarkup(progress) {
     </g></svg>`
 }
 
-export function createSpace(card, dialog) {
-  let track = createStudy(stateTrack), sandbox = {...orbitalDefaults}, mode = 'guided'
-  let active = false, animation = 0, introSeen = false, launchStart
-  try { introSeen = localStorage.getItem('sarcade-launch-seen') === 'yes' } catch { /* Storage is optional. */ }
+export function createSpace(card, dialog, saved, save) {
+  let track = restoreStudy(stateTrack,saved?.study), sandbox = {...orbitalDefaults}, mode = 'guided', selectedPreset = ''
+  const doc = id => document.getElementById(id)
+  const earth = doc('optical')
+  const view = {yaw:-.42,pitch:.24,zoom:1,panX:0,panY:0,progress:.55,signal:'range',product:'image',chapter:0,pulses:0,target:1}
+  let sensorWorker, requested, queued, revision=0, sceneKey
+  let passTimer=0, conceptTimer=0, drag
+  let active = false, animation = 0, introSeen = saved?.introSeen === true, launchStart
+  const persist = () => save?.({study:snapshotStudy(track),introSeen})
+  try { introSeen ||= localStorage.getItem('sarcade-launch-seen') === 'yes' } catch { /* Storage is optional. */ }
   const activeConfig = () => mode === 'sandbox' ? sandbox : studyConfig(currentLesson(track))
   function stopLaunch() {
     cancelAnimationFrame(animation)
     launchStart = undefined
     introSeen = true
+    persist()
     try { localStorage.setItem('sarcade-launch-seen','yes') } catch { /* Storage is optional. */ }
   }
   function launchFrame(now) {
@@ -86,11 +109,128 @@ export function createSpace(card, dialog) {
   }
   dialog.addEventListener('close',stopLaunch)
 
+  function requestOrbital(config,compare) {
+    const { focus, ...acquisition } = config
+    const key=JSON.stringify([acquisition,compare])
+    if(key===sceneKey) return
+    sceneKey=key
+    view.data=null
+    view.pulses=0
+    view.target=1
+    stopPass()
+    requested=++revision
+    clearTimeout(queued)
+    queued=setTimeout(()=>{
+      if(!active) return
+      if(!sensorWorker) {
+        sensorWorker=new Worker(new URL('./orbital-worker.js',import.meta.url),{type:'module'})
+        sensorWorker.onmessage=({data})=>{
+          if(!active || data.revision!==requested) return
+          view.data=data.state
+          view.pulses=view.mark==='raw'?0:data.state?.count??0
+          paint()
+        }
+        sensorWorker.onerror=event=>{
+          doc('orbit-count').textContent='Orbital engine error'
+          console.error(event.message)
+        }
+      }
+      sensorWorker.postMessage({revision:requested,config:acquisition,compare})
+    },70)
+  }
+
+  function paint() {
+    if(!active) return
+    const config=activeConfig()
+    const o=orbitalObservation(config)
+    let geo=config
+    if(view.mark==='curvature' && mode==='guided' && currentLesson(track).step===0 && view.chapter>=7) {
+      geo={...config,look:view.chapter===7?48:view.chapter===8?o.horizon:o.horizon+5}
+    }
+    paintSpace(config,o,{...view,geometryConfig:geo,geometryObservation:geo===config?o:orbitalObservation(geo)})
+    doc('orbit-scrub').max=view.data?.count??1
+    doc('orbit-scrub').value=view.pulses
+    doc('orbit-scrub').disabled=!view.data
+    doc('orbit-play').disabled=doc('orbit-step').disabled=!view.data
+    doc('orbit-count').textContent=view.data?`${view.pulses} / ${view.data.count} pulses`:o.look?'Computing orbital echoes…':'Beam misses Earth'
+    const target=card.querySelector('[data-orbit-target]')
+    if(target && view.data && target.options.length!==view.data.targets.length) {
+      target.innerHTML=view.data.targets.map((t,i)=>`<option value="${i}">Reflector ${t.id}</option>`).join('')
+    }
+    if(target) target.value=view.target
+    document.querySelectorAll('[data-orbital-signal]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.orbitalSignal===view.signal))
+    document.querySelectorAll('[data-orbital-product]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.orbitalProduct===view.product))
+  }
+
+  function stopPass() {
+    clearInterval(passTimer)
+    passTimer=0
+    doc('orbit-play').textContent='Play pass'
+  }
+  function setPulseCount(n) {
+    view.pulses=Math.max(0,Math.min(view.data?.count??0,n))
+    if(view.data) view.progress=view.pulses/view.data.count
+    paint()
+  }
+  doc('orbit-play').onclick=()=>{
+    if(passTimer) return stopPass()
+    if(!view.data) return
+    if(view.pulses>=view.data.count) setPulseCount(0)
+    doc('orbit-play').textContent='Pause pass'
+    passTimer=setInterval(()=>{
+      setPulseCount(view.pulses+1)
+      if(view.pulses>=view.data.count) stopPass()
+    },55)
+  }
+  doc('orbit-step').onclick=()=>{
+    stopPass()
+    setPulseCount(view.pulses>=view.data?.count?1:view.pulses+1)
+  }
+  doc('orbit-scrub').oninput=e=>{stopPass();setPulseCount(+e.target.value)}
+  doc('orbit-reset-camera').onclick=()=>{
+    Object.assign(view,{yaw:-.42,pitch:.24,zoom:1,panX:0,panY:0})
+    paint()
+  }
+  function adjustEarth(dx,dy,pan) {
+    if(pan) {view.panX+=dx; view.panY+=dy}
+    else {view.yaw+=dx*.012; view.pitch=Math.min(1.4,Math.max(-1.4,view.pitch+dy*.01))}
+    paint()
+  }
+  earth.addEventListener('pointerdown',e=>{
+    if(!active) return
+    drag={id:e.pointerId,x:e.clientX,y:e.clientY}
+    earth.setPointerCapture(e.pointerId)
+  })
+  earth.addEventListener('pointermove',e=>{
+    if(!active || drag?.id!==e.pointerId) return
+    adjustEarth(e.clientX-drag.x,e.clientY-drag.y,e.shiftKey)
+    drag.x=e.clientX;drag.y=e.clientY
+  })
+  earth.addEventListener('lostpointercapture',()=>{drag=null})
+  earth.addEventListener('wheel',e=>{
+    if(!active) return
+    e.preventDefault()
+    view.zoom=Math.max(.55,Math.min(2.3,view.zoom*Math.exp(-e.deltaY*.001)))
+    paint()
+  },{passive:false})
+  earth.addEventListener('keydown',e=>{
+    if(!active) return
+    const deltas={ArrowLeft:[-11,0],ArrowRight:[11,0],ArrowUp:[0,11],ArrowDown:[0,-11]}
+    if(!deltas[e.key]) return
+    e.preventDefault()
+    adjustEarth(...deltas[e.key],e.shiftKey)
+  })
+  document.querySelectorAll('[data-orbital-signal]').forEach(b=>b.onclick=()=>{view.signal=b.dataset.orbitalSignal;paint()})
+  document.querySelectorAll('[data-orbital-product]').forEach(b=>b.onclick=()=>{view.product=b.dataset.orbitalProduct;paint()})
+
   function draw() {
     if (!active) return
     const config = activeConfig()
     const observation = orbitalObservation(config)
+    const overview=card.querySelector('[data-orbit-overview]')
+    if(overview) overview.innerHTML=overviewRows(config)
     const details = card.querySelector('[data-orbit-readout]')
+    requestOrbital(config,view.mark==='image')
     if (details) {
       const look = observation.look
       const labels = [
@@ -100,24 +240,38 @@ export function createSpace(card, dialog) {
         ['Ideal range resolution',round(observation.rangeResolution,2)+' m'],['Radial Doppler',round(observation.radialDoppler)+' Hz'],
         ['Circular period',round(observation.period/60)+' min'],['Ground-track shift per orbit',round(observation.nadirShift)+'° west'],
         ['First unambiguous range interval',round(observation.unambiguous/1000)+' km'],
+        ['Extra path phase',round(observation.phaseError,2)+' rad'],
+        ...(view.data?[['Coherent patch aperture',round((view.data.times.at(-1)-view.data.times[0])*observation.speed)+' m']]:[]),
       ]
       const notices = [
         !look && `The beam center misses Earth. Geometric horizon: ${round(observation.horizon)}° off nadir.`,
         observation.beamClips && look && 'The far beam edge extends past the horizon. The displayed far edge is clipped.',
         observation.crossNadir && 'The beam straddles nadir. Swath reports the right-hand portion.',
-        config.speedScale !== 1 && 'Hypothetical local track speed. Orbit period still comes from the circular orbit at this altitude.',
+        config.speedScale !== 1 && 'Hypothetical non-Keplerian track speed. Orbit period still comes from the circular orbit at this altitude.',
         look && 2*observation.apertureDoppler > config.prf && 'PRF is below the estimated full-window stationary Doppler span. A shorter processing window or higher PRF can reduce aliasing.',
         look && observation.delaySpread > 1/config.prf && 'The modeled swath delay spread exceeds one pulse interval. A narrower swath or different timing is needed.',
       ].filter(Boolean)
       details.innerHTML = `<dl>${labels.map(([label,value])=>`<dt>${label}</dt><dd>${value}</dd>`).join('')}</dl>`
         + (notices.length ? `<ul class="orbital-warnings">${notices.map(text=>`<li>${text}</li>`).join('')}</ul>` : '')
     }
-    paintMonitors(config,observation)
+    paint()
   }
 
   function render() {
     const current = currentLesson(track), { lesson,step,confirmed,prediction,edits } = current
     const sandboxing = mode === 'sandbox'
+    const mark=sandboxing?'sandbox':lesson.mark
+    if(mark!==view.mark || view.term) {
+      clearInterval(conceptTimer)
+      view.mark=mark
+      view.signal=({velocity:'doppler',motion:'doppler',timing:'timing',swath:'timing',raw:'raw',band:'iq',phase:'iq',image:'raw'})[mark]??'range'
+      view.product=({overview:'coverage',swath:'coverage',track:'coverage',strip:'coverage',image:'compare'})[mark]??'image'
+      view.chapter=0
+      view.term=null
+      view.progress=.55
+      if(mark==='raw') view.pulses=0
+    }
+    document.querySelector('[data-orbital-product="compare"]').hidden=mark!=='image'
     const control = lesson.controls[0]
     const question = step === 0 ? lesson.predict : lesson.check
     const answer = step === 0 ? prediction : confirmed
@@ -125,18 +279,24 @@ export function createSpace(card, dialog) {
     card.innerHTML = `<header><h2>Space Mode</h2></header>
       <div class="space-switch"><button data-orbit-mode="guided" aria-pressed="${!sandboxing}">Guided lessons</button>
       <button data-orbit-mode="sandbox" aria-pressed="${sandboxing}">Space Sandbox</button></div>
-      <p class="study-scale">Spherical Earth and straight-line propagation. Orbital diagrams and sampling estimates.</p>
-      ${sandboxing ? orbitalControls.map(def => controlMarkup(def,sandbox[def.key],false)).join('') : `
+      <p class="study-scale">Spherical Earth · simulated coherent echoes from a local teaching patch</p>
+      ${sandboxing ? `<label class="space-parameter">Orbital preset<select data-orbital-preset><option value="">Custom</option>
+        ${Object.keys(orbitalPresets).map(name=>`<option ${name===selectedPreset?'selected':''}>${name}</option>`).join('')}</select></label>`
+      + orbitalControls.map(def => controlMarkup(def,sandbox[def.key],false)).join('') : `
         <label class="space-parameter">Choose orbital lesson<select data-space-lesson>${track.lessons.map(item =>
           `<option value="${item.id}" ${lesson.id===item.id?'selected':''}>${track.progress[item.id]?.confirmed===item.check.correct?'✓ ':''}${item.id} · ${item.title}</option>`).join('')}</select></label>
         <h3>${lesson.title}</h3><p class="study-scale">${STEPS[step]}</p>
         ${track.complete ? '<p>You reached the end of Spaceborne SAR.</p>' : `
           <p>${lesson.intro}</p>
+          ${step<=2 ? storyMarkup(lesson,activeConfig()) : ''}
           ${step===0 || step===3 ? `<fieldset class="study-question"><legend>${question.prompt}</legend>
             ${question.options.map((choice,i)=>`<label><input type="radio" name="space-answer" data-space-answer="${i}" ${answer===i?'checked':''}> <span>${choice}</span></label>`).join('')}
           </fieldset>` : ''}
-          ${step===1 ? controlMarkup(control,edits[control.key]??controlBaseline(lesson,control),true) : ''}
+          ${step===1 ? `<p class="study-scale">Adjust the unlocked control and read the updated monitor.</p>${controlMarkup(control,edits[control.key]??controlBaseline(lesson,control),true)}` : ''}
           ${step===2 ? `<p class="study-answer" data-result="${answerFeedback(lesson.predict,prediction)}">${prediction===lesson.predict.correct?'✓ Prediction matches.':'Revisit your prediction with the result in view.'}</p>
+            <p><strong>What changed?</strong> ${lesson.changed}</p>
+            <details><summary>Compare the signal and product</summary>${experimentComparison(lesson.baseline,activeConfig())}</details>
+            <details><summary>Why mathematically?</summary><p>${lesson.math}</p></details>
             <p class="study-bottom"><strong>Bottom line</strong><br>${lesson.bottom}</p>` : ''}
           <p class="study-feedback" data-space-feedback data-result="${step===3?result:'pending'}" role="status" ${step!==3||confirmed===null?'hidden':''}>${result==='correct'?'✓ Correct.':'Not quite.'} ${lesson.check.feedback}</p>
         `}
@@ -144,25 +304,78 @@ export function createSpace(card, dialog) {
           <button type="button" data-space-action="next" ${track.complete||!canAdvance(current)?'disabled':''}>Next</button>
           <button type="button" data-space-action="repeat">Repeat</button></div>
       `}
+      <details class="orbit-reference"><summary>Orbital vocabulary</summary>${orbitalVocabulary.map(([name,description,bottom],i)=>`
+        <div class="orbit-term"><button class="info-button" type="button" aria-label="About ${name}" data-parameter-info="orbital-term"
+          data-info-title="${name}" data-info-summary="${bottom}" data-info-details="${description}">ⓘ</button>
+          <button type="button" data-orbit-term="${i}">${name}</button></div>`).join('')}</details>
+      <label class="space-parameter">Track scatterer<select data-orbit-target><option value="1">Reflector B</option></select></label>
+      <label class="check"><input type="checkbox" data-orbit-overlay ${view.overlay?'checked':''}> Reference marker overlay</label>
       <div class="orbit-readout" data-orbit-readout></div><button type="button" data-launch-replay>Replay launch</button>`
+    const caption=card.querySelector('[data-orbit-caption]')
+    if(caption) caption.textContent=orbitChapters(view.mark)[view.chapter]
     draw()
   }
   card.addEventListener('click', e => {
+    const term = e.target.closest('[data-orbit-term]')?.dataset.orbitTerm
+    if(term!==undefined) {
+      view.term=termNames[+term]
+      if(view.term==='Ground track') view.mark='track'
+      else if(view.term==='Nadir') {
+        view.mark='nadir'
+        view.chapter=0
+      } else view.mark='overview'
+      paint()
+      return
+    }
+    const chapter = e.target.closest('[data-orbit-chapter]')?.dataset.orbitChapter
+    if(chapter) {
+      const steps=orbitChapters(currentLesson(track).lesson.mark)
+      view.mark=currentLesson(track).lesson.mark
+      view.term=null
+      view.chapter=chapter==='replay'?0:Math.max(0,Math.min(steps.length-1,view.chapter+(chapter==='next'?1:-1)))
+      const caption=card.querySelector('[data-orbit-caption]')
+      if(caption) caption.textContent=steps[view.chapter]
+      clearInterval(conceptTimer)
+      view.progress=.18
+      paint()
+      if(!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        conceptTimer=setInterval(()=>{
+          view.progress+=.025
+          paint()
+          if(view.progress>=1) clearInterval(conceptTimer)
+        },45)
+      }
+      return
+    }
     const toggle = e.target.closest('[data-orbit-mode]')?.dataset.orbitMode
     if (toggle) { mode = toggle; render(); return }
     const action = e.target.closest('[data-space-action]')?.dataset.spaceAction
-    if (action) { track = transition(track,{type:action}); render(); return }
+    if (action) { track = transition(track,{type:action}); persist(); render(); return }
     if (e.target.closest('[data-launch-replay]')) launch()
   })
   card.addEventListener('input', e => {
     const field = e.target
+    if(field.matches('[data-orbit-target]')) {view.target=+field.value;paint();return}
+    if(field.matches('[data-orbit-overlay]')) {view.overlay=field.checked;paint();return}
+    if(field.matches('[data-orbital-preset]') && orbitalPresets[field.value]) {
+      selectedPreset=field.value
+      sandbox={...orbitalPresets[field.value]}
+      render()
+      return
+    }
     const key = field.dataset.spaceControl
     if (key) {
       const spec = orbitalControls.find(item => item.key===key)
-      if (mode === 'sandbox') sandbox = orbitalConfig(sandbox,{[key]:spec.values ? field.value : +field.value})
+      if (mode === 'sandbox') {
+        sandbox = orbitalConfig(sandbox,{[key]:spec.values ? field.value : +field.value})
+        selectedPreset=''
+        const preset=card.querySelector('[data-orbital-preset]')
+        if(preset) preset.value=''
+      }
       else {
         track = transition(track,{type:'edit',key,value:+field.value})
         track = transition(track,{type:'observed'})
+        persist()
         card.querySelector('[data-space-action="next"]').disabled = !canAdvance(currentLesson(track))
       }
       const output = card.querySelector(`[data-space-output="${key}"]`)
@@ -172,6 +385,7 @@ export function createSpace(card, dialog) {
     if (field.dataset.spaceAnswer !== undefined) {
       const {step,lesson} = currentLesson(track)
       track = transition(track,{type:step===0?'predict':'confirm',value:+field.dataset.spaceAnswer})
+      persist()
       const current = currentLesson(track)
       card.querySelector('[data-space-action="next"]').disabled = !canAdvance(current)
       if (step===3) {
@@ -185,108 +399,15 @@ export function createSpace(card, dialog) {
   card.addEventListener('change', e => {
     if (e.target.matches('[data-space-lesson]')) {
       track = transition(track,{type:'select',value:e.target.value})
+      persist()
       render()
     }
   })
   return {
-    enter() { active = true; render(); if (!introSeen) launch() },
-    leave() { active = false; if (dialog.open) dialog.close() },
+    enter() { active=true; earth.tabIndex=0; render(); if(!introSeen) launch() },
+    leave() { active=false; sceneKey=undefined; earth.removeAttribute('tabindex'); clearTimeout(queued);
+      clearInterval(conceptTimer); stopPass(); if(dialog.open) dialog.close() },
+    resetProgress() { track = createStudy(stateTrack); introSeen = false; mode = 'guided' },
     draw,
   }
-}
-
-function paintMonitors(config,o) {
-  const painters = [mapView, geometryView, delayView, samplingView, stripView]
-  canvasIds.forEach((id,i) => {
-    const canvas = document.getElementById(id)
-    const ratio = Math.min(window.devicePixelRatio || 1,2)
-    const bounds = canvas.getBoundingClientRect()
-    if (bounds.width < 8 || bounds.height < 8) return
-    canvas.width = Math.round(bounds.width*ratio)
-    canvas.height = Math.round(bounds.height*ratio)
-    const ctx = canvas.getContext('2d')
-    ctx.setTransform(canvas.width/320,0,0,canvas.height/180,0,0)
-    ctx.fillStyle='#060e20'; ctx.fillRect(0,0,320,180)
-    ctx.font='10px system-ui'
-    painters[i](ctx,config,o)
-  })
-}
-
-function text(ctx,string,x,y,color='#a7c8e8') { ctx.fillStyle=color; ctx.fillText(string,x,y) }
-function poly(ctx,points,color,dash=[]) {
-  ctx.beginPath()
-  points.forEach(([x,y],i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y))
-  ctx.strokeStyle=color; ctx.setLineDash(dash); ctx.stroke(); ctx.setLineDash([])
-}
-function curve(ctx,fn,color) {
-  poly(ctx,Array.from({length:121},(_,i) => fn(i/120)),color)
-}
-
-function mapView(ctx,c,o) {
-  for (let i=0;i<48;i++) {
-    ctx.fillStyle=i%6===0?'#7494af':'#38506f'; ctx.fillRect(i*47%319,i*83%166,1,1)
-  }
-  ctx.beginPath(); ctx.ellipse(162,166,151,110,0,Math.PI,2*Math.PI)
-  ctx.fillStyle='#163752'; ctx.fill(); ctx.strokeStyle='#59bfd3'; ctx.stroke()
-  curve(ctx,t=>[26+267*t,118-43*Math.sin(Math.PI*t)],'#88e0e7')
-  curve(ctx,t=>[26+267*t,138-43*Math.sin(Math.PI*t+o.nadirShift/85)],'#6380a3')
-  text(ctx,'ILLUSTRATIVE GROUND TRACKS',15,20)
-  text(ctx,`Next orbit shifts about ${round(o.nadirShift)}° west at the equator`,15,159)
-}
-function geometryView(ctx,c,o) {
-  const source=[158,30], origin=[77,142]
-  ctx.beginPath(); ctx.ellipse(157,215,176,124,0,Math.PI,2*Math.PI)
-  ctx.fillStyle='#18334d'; ctx.fill(); ctx.strokeStyle='#57a6c3'; ctx.stroke()
-  ctx.fillStyle='#a8e5f0'; ctx.fillRect(145,25,26,7)
-  if (!o.look) {
-    poly(ctx,[source,[310,55]],'#f4bc85')
-    text(ctx,'Beam misses the spherical surface',31,150,'#f5be84')
-    return
-  }
-  const point = intersection => [158+148*Math.min(1,intersection.central*1.7),92+Math.min(1,intersection.central*1.9)**2*65]
-  poly(ctx,[source,point(o.near),point(o.far),source],'#436d88',[3,3])
-  poly(ctx,[source,point(o.look)],'#6dedec')
-  poly(ctx,[point(o.look),[point(o.look)[0]+17,point(o.look)[1]-27]],'#c6dfef',[2,3])
-  text(ctx,`Look ${c.look}° · local incidence ${round(o.look.incidence)}°`,origin[0]-57,151)
-  text(ctx,`Spherical ${round(o.look.range/1000)} km · flat ${round(c.altitude/Math.cos(c.look*Math.PI/180))} km`,20,168)
-}
-function delayView(ctx,c,o) {
-  text(ctx,'ROUND-TRIP DELAY ACROSS THE PASS',14,17)
-  if (!o.look) return text(ctx,'No ground echo along the selected ray',14,97)
-  const center = orbitalDelay(o,0,c), edge = orbitalDelay(o,c.observation/2,c)
-  poly(ctx,[[24,26],[24,145],[299,145]],'#415e79')
-  curve(ctx,t=>[24+t*275,140-83*(orbitalDelay(o,(t-.5)*c.observation,c)-center)/Math.max(1e-14,edge-center)],'#70e9dd')
-  text(ctx,`Closest return ${round(center*1000,3)} ms · edge +${round((edge-center)*1e6,2)} µs`,14,163)
-}
-function samplingView(ctx,c,o) {
-  text(ctx,'PHASE, DOPPLER & PULSE SPACING',14,17)
-  const phase = o.phaseError % (Math.PI*2)
-  ctx.beginPath(); ctx.arc(63,91,31,0,Math.PI*2); ctx.strokeStyle='#415e79'; ctx.stroke()
-  poly(ctx,[[63,91],[63+28*Math.cos(phase),91-28*Math.sin(phase)]],'#66efe1')
-  text(ctx,`${round(o.phaseError)} rad extra phase`,15,142)
-  const span = o.apertureDoppler
-  if (span === null) return
-  const half = Math.max(span,c.prf/2,1), y = 105
-  poly(ctx,[[121,y],[300,y]],'#415e79')
-  const x = v => 210+v*85/half
-  poly(ctx,[[x(-span),y-18],[x(span),y-18]],'#6de3dc')
-  poly(ctx,[[x(-c.prf/2),y],[x(c.prf/2),y]],'#f4c482')
-  text(ctx,'Modeled Doppler span',124,67)
-  text(ctx,'Unaliased ±PRF/2',124,129)
-  text(ctx,`Target radial component ${round(o.radialDoppler)} Hz`,124,152)
-}
-function stripView(ctx,c,o) {
-  text(ctx,'SWATH COVERAGE · CONCEPTUAL',14,18)
-  if (!o.look) return text(ctx,'No centered surface coverage for this look',15,91)
-  ctx.fillStyle=c.terrain==='ocean'?'#103b55':c.terrain==='rural'?'#25494d':'#273b4f'
-  ctx.fillRect(28,37,264,109)
-  if (c.terrain === 'urban') for (const b of urbanBuildings(c.urbanDensity)) {
-    ctx.fillStyle=b.height>45?'#909eae':'#50697d'
-    ctx.fillRect(157+b.x*.56,91+b.y*.36,b.hx*.72,b.hy*.5)
-  }
-  const width=Math.min(94,Math.max(8,o.width/3800))
-  const length=Math.min(239,Math.max(24,o.azimuthLength/1000))
-  ctx.fillStyle='#6becdb27'; ctx.fillRect(38,91-width/2,length,width)
-  ctx.strokeStyle='#80ecd9'; ctx.strokeRect(38,91-width/2,length,width)
-  text(ctx,`${round(o.azimuthLength/1000)} km track × ${round(o.width/1000)} km one-sided swath`,14,162)
 }

@@ -1,12 +1,18 @@
+import { elevation } from './terrain.js'
+import { roofHeight } from './environments.js'
 import { AREA, C, DURATION, platform, pulseTime, sample } from './physics.js'
 
-export function createFocuser(state, { vx = 0, vy = 0, trajectoryDrift = 0 } = {}) {
+export function createFocuser(state, { vx = 0, vy = 0, trajectoryDrift = 0, elevationAware = false } = {}) {
   const { width, height, config, bins, rangeI, rangeQ, minRange, dr } = state
   const n = width * height
   const xs = Float64Array.from({ length: width }, (_, x) => AREA.x * (2 * (x + 0.5) / width - 1))
   const satY = platform(config, 0).y
   const ys = Float64Array.from({ length: height }, (_, y) => AREA.y * (2 * (y + 0.5) / height - 1) - satY)
   const altitudeSquared = config.altitude ** 2
+  const heights = elevationAware ? Float32Array.from({length:n},(_,k)=>{
+    const x = xs[k%width], y = ys[Math.floor(k/width)]+satY
+    return config.scenario === 'urban' ? roofHeight(config.urbanDensity,x,y) : elevation(config,x,y)
+  }) : null
   const i = new Float32Array(n), q = new Float32Array(n)
   const snapshots = new Map()
   const phaseFactor = 4 * Math.PI * config.frequency * 1e6 / C
@@ -43,14 +49,14 @@ export function createFocuser(state, { vx = 0, vy = 0, trajectoryDrift = 0 } = {
         const crossRangeSquared = altitudeSquared + (ys[y]+shiftY)**2
         for (let x = 0; x < width; x++) {
           const dx = xs[x] + shiftX - satX
-          // All candidate pixels share the selected flat-ground motion hypothesis.
-          const range = Math.sqrt(dx * dx + crossRangeSquared)
+          const k = y * width + x
+          const h = heights?.[k] ?? 0
+          const range = Math.sqrt(dx * dx + crossRangeSquared + h*(h-2*config.altitude))
           const cell = (range - minRange) / dr
           const re = sample(rangeI, offset, cell, bins)
           const im = sample(rangeQ, offset, cell, bins)
           const phase = phaseFactor * range
           const cos = Math.cos(phase) * apodization, sin = Math.sin(phase) * apodization
-          const k = y * width + x
           i[k] += re * cos - im * sin
           q[k] += re * sin + im * cos
         }
