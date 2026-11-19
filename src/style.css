@@ -329,3 +329,16 @@ dialog p { margin-top: 14px; color: #afc1d1; line-height: 1.55; }
   .studying .transport { position: static; }
   .studying .study-body { overflow: visible; }
 }
+
+.study-visual { margin-block: 12px; padding: 10px; border: 1px solid #34465f; border-radius: 7px; background: #101b2b; }
+.study-visual h3 { margin: 0 0 4px; font-size: 13px; color: #81e8e1; }
+.study-visual p { margin: 4px 0; font-size: 11px; }
+.study-visual svg { display: block; width: 100%; background: #0b1423; border-radius: 4px; margin-block: 8px; font: 9px ui-monospace, monospace; }
+.study-visual-controls { display: flex; align-items: center; gap: 8px; }
+.study-visual-controls input { width: 100%; min-width: 40px; }
+.study-visual-steps { display: flex; gap: 5px; margin-block: 7px; }
+.study-visual button { padding: 3px 8px; white-space: nowrap; }
+.study-visual button[aria-pressed="true"] { color: #83ebe3; border-color: #3caaa7; }
+.study-choice { display: grid; gap: 5px; font-size: 12px; }
+.study-changes { border-inline-start: 2px solid #466a83; padding-inline-start: 10px; }
+.study-changes strong { display: block; }

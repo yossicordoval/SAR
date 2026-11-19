@@ -1,4 +1,4 @@
-import { compressedProfile, components, createAcquisition, pulseTime } from './physics.js'
+import { compressedProfile, components, createAcquisition, DURATION, pulseTime } from './physics.js'
 import { createFocuser, migration } from './processing.js'
 
 let state, focus
@@ -22,14 +22,21 @@ self.onmessage = ({ data: msg }) => {
   const corrected = msg.stage === 'migration' ? migration(state, first, pulse, msg.selected) : null
   let comparison
   if (msg.study) {
-    const { id, baseline, profile } = msg.study
+    const { id, baseline, profile, time, visualBandwidth } = msg.study
     if (!comparisons.has(id)) {
       const reference = createAcquisition(baseline)
-      const referencePulse = Math.min(reference.count - 1, pulse)
+      const referencePulse = Math.round(time / DURATION * (reference.count - 1))
+      let wide
+      if (visualBandwidth) {
+        const example = createAcquisition({ ...baseline, bandwidth: visualBandwidth })
+        wide = { profile: compressedProfile(example, referencePulse), minRange: example.minRange, dr: example.dr }
+      }
+      const start = referencePulse * reference.bins
       comparisons.set(id, {
+        wide, iqI: reference.i.slice(start,start+reference.bins), iqQ: reference.q.slice(start,start+reference.bins),
         tracks: reference.tracks, pulse: referencePulse, minRange: reference.minRange, dr: reference.dr,
         profile: profile === 'compressed' ? compressedProfile(reference, referencePulse)
-          : profile === 'range' ? components(reference, referencePulse, msg.selected).echo : null,
+          : profile === 'range' ? components(reference, referencePulse, Object.keys(reference.tracks)[0]).echo : null,
       })
     }
     comparison = comparisons.get(id)

@@ -4,6 +4,8 @@ import { plotImage, plotMatrix, plotProfile } from './plots.js'
 import { createScene } from './scene.js'
 import { icon, renderLayout } from './ui.js'
 import { renderStudy, updateStudyMeasurements, updateStudyNavigation } from './study.js'
+import { mountVisualization } from './study-visual.js'
+import { studyScene } from './curriculum-expanded.js'
 import { curriculum } from './curriculum.js'
 import { createStudy, currentLesson, studyConfig, transition } from './study-state.js'
 
@@ -15,7 +17,7 @@ const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'modu
 const view = { mode: 'sandbox', tab: 'range', stage: 'focused', instant: false, selected: 'vehicle',
   playing: false, rate: 1, pulse: Math.round((pulseCount(DEFAULTS) - 1) * 0.61), maximum: null }
 let config = { ...DEFAULTS }, sandbox, frame, acquisition, revision = 1, activeRevision = 0
-let study = createStudy(curriculum)
+let study = createStudy(curriculum), updateVisualization
 const studyCard = $('study-card')
 const studyContext = () => view.mode === 'study' ? currentLesson(study) : null
 let request = 0, sent = 0, scheduled = false, pending = false, startTime = 0, startPulse = 0
@@ -62,7 +64,8 @@ function send() {
   if (newAcquisition) status('COMPUTING','busy')
   sent = request
   const lesson = studyContext()?.lesson
-  const comparison = lesson && { id: lesson.id, baseline: lesson.baseline, profile: lesson.profile }
+  const comparison = lesson && { id: lesson.id, baseline: lesson.baseline, profile: lesson.profile, time: lesson.time,
+    visualBandwidth: lesson.visual === 'bandwidth' ? lesson.controls[0].max : undefined }
   worker.postMessage({ revision, request: sent, config: newAcquisition ? config : null, pulse: view.pulse,
     instant: view.instant, stage: view.stage, selected: view.selected, study: comparison })
   activeRevision = revision
@@ -83,6 +86,7 @@ worker.onmessage = ({ data }) => {
     if (lesson && frame.studyId === lesson.id) {
       study = transition(study, { type: 'observed' })
       updateStudyMeasurements(studyCard, lesson, frame)
+      updateVisualization?.(frame)
       updateStudyNavigation(studyCard, currentLesson(study))
     }
     if (view.playing && view.pulse === acquisition.count - 1) setPlaying(false)
@@ -227,17 +231,37 @@ function showStudy(focusHeading = false, resetSelection = false) {
   $('monitors').dataset.lesson = lesson.id
   all('.panel').forEach(panel => panel.classList.toggle('study-highlight',lesson.panels.includes(panel.id.slice(6))))
   renderStudy(studyCard,study)
+  updateVisualization = mountVisualization(studyCard,lesson,time => {
+    const control = studyCard.querySelector('[data-study-control="pulseIndex"]')
+    if (!control) return
+    control.value = Math.round(time / DURATION * (pulseCount(config)-1))
+    control.dispatchEvent(new Event('input',{ bubbles: true }))
+  })
   if (!sameLesson || resetSelection) view.selected = lesson.focus ?? sceneObjects(lesson.baseline)[0].id
   updateStudyTarget()
   view.stage = lesson.stage
   $('stage').value = lesson.stage
   selectTab(lesson.tab)
   setInstant(lesson.instant)
-  const experiment = current.step === 0 ? lesson.baseline : studyConfig(current)
-  if (Object.entries(experiment).some(([key, value]) => config[key] !== value)) editConfig(experiment)
-  setPulse(Math.round(lesson.time / DURATION * (pulseCount(config) - 1)))
+  applyStudyExperiment(current)
   updateStudyNavigation(studyCard,current,true)
   if (focusHeading) $('study-heading').focus({ preventScroll: true })
+}
+
+function applyStudyExperiment(current) {
+  const { lesson, step } = current
+  const edits = step ? current.edits : {}
+  const experiment = edits.sceneMix === undefined ? studyConfig({ lesson, edits }) : studyScene(edits.sceneMix)
+  if (Object.entries(experiment).some(([key, value]) => config[key] !== value)) editConfig(experiment)
+  const stage = lesson.controls.find(control => control.key === 'stage')
+  view.stage = stage?.values[edits.stage] ?? lesson.stage
+  $('stage').value = view.stage
+  const aperture = lesson.controls.find(control => control.key === 'pulses')
+  const count = pulseCount(config)
+  setPulse(aperture ? (aperture.values[edits.pulses] ?? 1)-1
+    : edits.pulseIndex ?? Math.round((edits.time ?? lesson.time) / DURATION * (count - 1)))
+  $('timeline-label').textContent = lesson.controls.some(control => ['time','pulses','pulseIndex'].includes(control.key))
+    ? 'STUDY FLIGHT POSITION' : 'FIXED EXPERIMENT POSITION'
 }
 
 function setMode(mode) {
@@ -299,9 +323,11 @@ studyCard.oninput = e => {
   const next = transition(study, { type: 'edit', key, value: Number(e.target.value) })
   if (next === study) return
   study = next
-  editConfig(studyConfig(currentLesson(study)))
-  $('study-value-' + key).textContent = e.target.value + ' ' + e.target.dataset.unit
-  fillRange(e.target)
+  applyStudyExperiment(currentLesson(study))
+  if (e.target.type === 'range') {
+    $('study-value-' + key).textContent = e.target.value + (e.target.dataset.unit ? ' ' + e.target.dataset.unit : '')
+    fillRange(e.target)
+  }
   updateStudyNavigation(studyCard,currentLesson(study),true)
 }
 function sandboxOnly(action) {

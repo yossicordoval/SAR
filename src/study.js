@@ -1,4 +1,5 @@
-import { canAdvance, currentLesson, STEPS, studyConfig } from './study-state.js'
+import { visualMarkup } from './study-visual.js'
+import { canAdvance, controlBaseline, currentLesson, STEPS } from './study-state.js'
 
 function question(question, action, selected) {
   return `<fieldset class="study-question"><legend>${question.prompt}</legend>${
@@ -7,10 +8,13 @@ function question(question, action, selected) {
 }
 
 function controlMarkup(control, value) {
-  const { key, label, unit, min, max, step } = control
-  return `<label class="slider-label study-slider" for="study-control-${key}"><span id="study-label-${key}">${label}</span><output id="study-value-${key}">${value} ${unit}</output>
+  const { key, label, unit, min, max, step, labels } = control
+  const suffix = unit ? ' ' + unit : ''
+  if (labels) return `<label class="study-choice">${label}<select id="study-control-${key}" data-study-control="${key}">${labels.map((text,i) =>
+    `<option value="${i}" ${i === value ? 'selected' : ''}>${text}</option>`).join('')}</select></label>`
+  return `<label class="slider-label study-slider" for="study-control-${key}"><span id="study-label-${key}">${label}</span><output id="study-value-${key}">${value}${suffix}</output>
     <input type="range" id="study-control-${key}" aria-labelledby="study-label-${key}" data-study-control="${key}" data-unit="${unit}" min="${min}" max="${max}" step="${step}" value="${value}" style="--fill:${(value-min)/(max-min)*100}%">
-    <span class="study-range-labels" aria-hidden="true"><span>${min} ${unit}</span><span>${max} ${unit}</span></span></label>`
+    <span class="study-range-labels" aria-hidden="true"><span>${min}${suffix}</span><span>${max}${suffix}</span></span></label>`
 }
 
 export function renderStudy(card, state) {
@@ -18,36 +22,37 @@ export function renderStudy(card, state) {
   const { lesson, step, prediction, confirmed, reference } = current
   const { phase } = lesson
   const prefix = `<div class="study-phase"><span>Phase ${phase.id} · ${phase.title}</span><span>${phase.index + 1} / ${phase.count}</span></div>`
-  const controls = studyConfig(current)
   const stepMarkup = [
     `<p class="study-intro">${lesson.intro}</p>
      <div class="study-watch"><strong>What should I watch?</strong><p>${lesson.watch}</p></div>
      ${question(lesson.predict, 'predict', prediction)}`,
     `<p class="study-intro">${lesson.task}</p>
-     <div class="study-controls">${lesson.controls.map(control => controlMarkup(control,controls[control.key])).join('')}</div>
-     <p class="study-lock">Other parameters and the flight position are fixed for this comparison.</p>
+     <div class="study-controls">${lesson.controls.map(control => controlMarkup(control,current.edits[control.key] ?? controlBaseline(lesson, control))).join('')}</div>
+     <p class="study-lock">${lesson.controls.some(control => control.view) ? 'The monitors share the same acquired pulse and scene.' : 'Other parameters and the flight position are fixed for this comparison.'}</p>
      <p id="study-observation" class="study-observation">${current.tested ? 'Change observed. Compare again or continue.' : 'Change a control and observe the result before continuing.'}</p>`,
     `<p class="study-intro">${prediction === lesson.predict.correct ? 'Your prediction matches the result.' : 'Compare the result with your prediction.'}</p>
      <p>${lesson.why}</p>
+     ${lesson.changed ? `<div class="study-changes"><p><strong>What physically changed?</strong> ${lesson.changed}</p><p><strong>What did NOT change?</strong> ${lesson.fixed}</p></div>` : ''}
      <details class="study-math"><summary>Why mathematically?</summary><p>${lesson.math}</p></details>
      <div class="study-bottom"><strong>Bottom line</strong><p>${lesson.bottom}</p></div>`,
     `${question(lesson.check,'confirm',confirmed)}
      <p id="study-feedback" class="study-feedback" role="status" ${confirmed === null ? 'hidden' : ''}>${confirmationText(current)}</p>`,
   ]
-  const title = state.complete ? 'Phase 0A preview complete' : lesson.title
+  const title = state.complete ? 'SAR Study Mode complete' : lesson.title
   card.innerHTML = `<div class="study-header">${prefix}<h2 id="study-heading" tabindex="-1">${title}</h2>
     ${state.complete ? '' : `<ol class="study-steps" aria-label="Lesson steps">${STEPS.map((name,i) =>
       `<li ${i === step ? 'aria-current="step"' : ''} class="${i < step ? 'visited' : ''}"><span>${i+1}</span> ${name}</li>`).join('')}</ol>`}
     </div>
     <div class="study-body">
-      ${state.complete ? '<p>You completed the three experiments on geometry, carrier frequency, and bandwidth. Go back to review a result or repeat the bandwidth experiment.</p>' : `
+      ${state.complete ? '<p>You completed the radar parameters, monitor guides, and SAR process lessons. Go back to review or repeat an experiment.</p>' : `
         ${stepMarkup[step]}
+        ${step <= 1 && lesson.visual ? visualMarkup(lesson.visual) : ''}
         <div class="study-measurements">
           <table aria-label="Live experiment measurements"><thead><tr><th scope="col">Measurement</th><th scope="col">Baseline</th><th scope="col">Current</th></tr></thead>
             <tbody>${lesson.metrics.map(metric => `<tr><th scope="row">${metric.label}</th><td>—</td><td>—</td></tr>`).join('')}</tbody></table>
           ${lesson.targets ? `<div class="study-targets" aria-label="Reflector trace"><span>Follow trace</span>${lesson.targets.map(target => `<button type="button" data-study-target="${target.id}">${target.label}</button>`).join('')}</div>` : ''}
           <label class="check study-reference"><input type="checkbox" data-study-action="reference" ${reference ? 'checked' : ''}> Show dashed baseline in plot</label>
-          <p class="study-scale" title="The geometry and units are internally consistent. Dimensions, frequencies, and scattering are simplified for teaching.">Teaching-scale simulation${lesson.baseline.clutter ? '' : ' · ground clutter and noise off'}</p>
+          <p class="study-scale" title="The geometry and units are internally consistent. Dimensions, frequencies, and scattering are simplified for teaching.">Teaching-scale simulation${lesson.baseline.clutter || lesson.baseline.noise || lesson.controls.some(control => ['clutter','noise','sceneMix'].includes(control.key)) ? '' : ' · ground clutter and noise off'}</p>
         </div>`}
     </div>
     <nav class="study-nav" aria-label="Lesson navigation">
@@ -81,10 +86,10 @@ export function updateStudyNavigation(card, current, waiting = false) {
 export function updateStudyMeasurements(card, lesson, frame) {
   if (!frame?.comparison) return
   const format = (metric, config, tracks, pulse) => {
-    const primary = lesson.focus || Object.keys(tracks)[0]
+    const primary = tracks[lesson.focus] ? lesson.focus : Object.keys(tracks)[0]
     const secondary = lesson.targets?.find(target => target.id !== primary)?.id
     const value = metric.read(config, tracks[primary][pulse], tracks[secondary]?.[pulse])
-    return Number.isFinite(value) ? value.toFixed(metric.digits) + ' ' + metric.unit : '—'
+    return Number.isFinite(value) ? value.toFixed(metric.digits) + (metric.unit ? ' ' + metric.unit : '') : '—'
   }
   card.querySelectorAll('tbody tr').forEach((row,i) => {
     const metric = lesson.metrics[i]

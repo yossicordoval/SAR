@@ -23,8 +23,19 @@ export function canAdvance(current) {
   }
 }
 
+export function controlBaseline(lesson, control) {
+  const value = control.view ? lesson[control.key] : lesson.baseline[control.key]
+  return control.values ? Math.max(0, control.values.indexOf(value)) : value
+}
+
 export function studyConfig({ lesson, edits }) {
-  return { ...lesson.baseline, ...edits }
+  const config = { ...lesson.baseline }
+  for (const control of lesson.controls) {
+    if (!control.view && Object.hasOwn(edits, control.key)) {
+      config[control.key] = control.values?.[edits[control.key]] ?? edits[control.key]
+    }
+  }
+  return config
 }
 
 export function transition(state, { type, key, value }) {
@@ -57,11 +68,11 @@ export function transition(state, { type, key, value }) {
     if (!control || !Number.isFinite(value)) return state
     const snapped = control.min + Math.round((value - control.min) / control.step) * control.step
     const next = Math.max(control.min, Math.min(control.max, snapped))
-    if (next === (current.edits[key] ?? lesson.baseline[key])) return state
+    if (next === (current.edits[key] ?? controlBaseline(lesson, control))) return state
     return save({ ...current, edits: { ...current.edits, [key]: next }, confirmed: null })
   }
   if (type === 'observed' && current.step === 1 && !current.tested &&
-      Object.entries(current.edits).some(([field, edited]) => edited !== lesson.baseline[field])) {
+      Object.entries(current.edits).some(([field, edited]) => edited !== controlBaseline(lesson, lesson.controls.find(control => control.key === field)))) {
     return save({ ...current, tested: true })
   }
   return state

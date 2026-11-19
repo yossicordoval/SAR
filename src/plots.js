@@ -1,3 +1,4 @@
+import { comparisonAxes, historyFraction, rangeFraction } from './study-axes.js'
 import { AREA, DURATION } from './physics.js'
 import { migrationShift } from './processing.js'
 
@@ -87,17 +88,19 @@ export function plotProfile(canvas, frame, tab, contributions, study) {
     const history = a.tracks[frame.selected]
     const available = history.slice(frame.first, frame.pulse + 1)
     const reference = study && frame.comparison?.tracks[frame.selected]
-    const scaleHistory = reference ? [...history, ...reference] : history
-    const max = Math.ceil(Math.max(...scaleHistory.flatMap(v => [Math.abs(v.doppler), Math.abs(v.stationary)]), 2) / 3) * 3
+    const max = study ? comparisonAxes(study.lesson).doppler : Math.ceil(Math.max(...history.flatMap(v => [Math.abs(v.doppler), Math.abs(v.stationary)]), 2) / 3) * 3
     const vertical = v => y + (1 - v / max) * height / 2
     const x0 = x + width * frame.first / (a.count - 1)
-    const extent = width * (frame.pulse - frame.first) / (a.count - 1)
+    const extent = width * historyFraction(frame.pulse - frame.first, a.count)
     ticks(ctx,x,y,width,height,5,2,u => (u * DURATION).toFixed(1) + 's',u => Math.round((1 - 2*u)*max))
     if (history.some(v => Math.abs(v.doppler - v.stationary) > 0.001))
       trace(ctx,available.map(v => v.stationary),x0,extent,vertical,amber)
     if (reference && study.reference) {
       ctx.setLineDash([5, 4])
-      trace(ctx,reference.slice(frame.first,frame.pulse+1).map(v => v.doppler),x0,extent,vertical,'#a8afcd')
+      const first = frame.first === frame.pulse ? frame.comparison.pulse : 0
+      trace(ctx,reference.slice(first,frame.comparison.pulse+1).map(v => v.doppler),
+        x + width * historyFraction(first, reference.length),
+        width * historyFraction(frame.comparison.pulse - first, reference.length),vertical,'#a8afcd')
       ctx.setLineDash([])
     }
     trace(ctx,available.map(v => v.doppler),x0,extent,vertical,cyan)
@@ -106,6 +109,30 @@ export function plotProfile(canvas, frame, tab, contributions, study) {
     return
   }
   const iq = tab === 'iq'
+  if (iq && study) {
+    const axes = comparisonAxes(study.lesson)
+    const vertical = value => y + height * (1-clamp((1+value/axes.magnitude)/2))
+    ticks(ctx,x,y,width,height,5,2,t => Math.round(axes.left+(axes.right-axes.left)*t)+'m',
+      t => ((1-2*t)*axes.magnitude).toFixed(1))
+    const curve = (values, origin, dr, color, dashed) => {
+      const first = Math.max(0,Math.ceil((axes.left-origin)/dr))
+      const last = Math.min(values.length-1,Math.floor((axes.right-origin)/dr))
+      if (last < first) return
+      ctx.setLineDash(dashed ? [4,4] : [])
+      trace(ctx,values.slice(first,last+1),x+width*rangeFraction(origin+first*dr,axes),
+        width*(last-first)*dr/(axes.right-axes.left),vertical,color)
+      ctx.setLineDash([])
+    }
+    const base = frame.comparison
+    if (study.reference) {
+      curve(base.iqI,base.minRange,base.dr,'#a8afcd',true)
+      curve(base.iqQ,base.minRange,base.dr,'#917d63',true)
+    }
+    curve(frame.iqI,a.minRange,a.dr,cyan,false)
+    curve(frame.iqQ,a.minRange,a.dr,amber,false)
+    marker(ctx,x+width*rangeFraction(selected.range,axes),y,height,'#a8e0ab6b')
+    return
+  }
   const { echo, ground, target } = frame.profiles
   const max = Math.max(...echo, 2) * 1.08
   const vertical = v => y + height * (iq ? (1 - v / max) / 2 : 1 - v / max)
@@ -134,18 +161,15 @@ function plotStudyRange(ctx, { x, y, width, height }, frame, { lesson, reference
   const baseline = frame.comparison
   const current = frame.compressed || frame.profiles.echo
   const points = Object.values(frame.tracks).map(track => track[frame.pulse].range)
-  const compared = Object.values(baseline.tracks).map(track => track[baseline.pulse].range)
-  const zoom = lesson.zoom || 32
-  const domain = [...points, ...compared]
-  const left = Math.min(...domain) - zoom
-  const right = Math.max(...domain) + zoom
-  const max = Math.max(3.5, Math.ceil(Math.max(...current,...baseline.profile)))
+  const axes = comparisonAxes(lesson)
+  const { left, right, magnitude: max } = axes
   const yAt = v => y + height * (1 - clamp(v / max))
-  const xAt = range => x + width * (range - left) / (right - left)
+  const xAt = range => x + width * rangeFraction(range, axes)
   ticks(ctx,x,y,width,height,4,2,t => Math.round(left + (right-left)*t) + ' m',t => (max*(1-t)).toFixed(1))
   const curve = (values, start, resolution, color, dashed) => {
     const first = Math.max(0,Math.ceil((left-start)/resolution))
     const last = Math.min(values.length-1,Math.floor((right-start)/resolution))
+    if (last < first) return
     const axis = start + first*resolution
     ctx.setLineDash(dashed ? [5, 4] : [])
     trace(ctx, values.slice(first,last+1), xAt(axis), (last-first)*resolution*width/(right-left), yAt, color)
@@ -157,6 +181,7 @@ function plotStudyRange(ctx, { x, y, width, height }, frame, { lesson, reference
     const color = index === 0 ? '#a5f6be' : amber
     const active = frame.selected === Object.keys(frame.tracks)[index]
     const px = xAt(range)
+    if (px < x || px > x + width) return
     marker(ctx,px,y,height,active ? color : color + 'a0')
     ctx.fillStyle = color
     ctx.fillText(index === 0 ? 'A' : 'B',px + (index === 0 ? -10 : 3),y + 12)
